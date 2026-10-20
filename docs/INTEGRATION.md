@@ -40,9 +40,10 @@ one secure record where possible. The package validates records on decode, and
 derives validity and permitted logins from certificates. It stores no login or
 expiry flag. Encoded records contain private keys; do not log or sync them.
 
-`signOut` cancels pending login, clears the cached proxy path, and removes local
-credentials. The app closes its dependent SSH sessions. Sign-out does not revoke
-certificates already issued by the server.
+`signOut` cancels pending authentication, clears the cached proxy path, and removes
+the issued identity. It keeps the registered Secure Enclave credential. The app
+closes its dependent SSH sessions. Sign-out does not revoke certificates already
+issued by the server.
 
 Use system HTTPS trust for a proxy with a public certificate. With a private
 HTTPS CA, iOS URLSession can reject the connection before the package's custom

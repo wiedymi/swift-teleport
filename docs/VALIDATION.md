@@ -35,6 +35,11 @@ Checks for this change:
   -configuration Release CODE_SIGNING_ALLOWED=NO build`: passed in default Derived Data.
 - Five Python lab checks, shell syntax, and diff checks passed.
 
+The Linux infrastructure-control CI run at `ade6ae3` failed while pulling its
+image: the registry returned `toomanyrequests: Data limit exceeded`. It did not
+start a server. This is separate from the local native result and the earlier
+Linux config-ownership failure below.
+
 Unverified: real Secure Enclave key creation/use, signed Data Protection Keychain
 access, Face ID/Touch ID prompt enforcement and cancellation, lockout, restart
 persistence, biometric enrollment changes, physical-device recovery, and real
