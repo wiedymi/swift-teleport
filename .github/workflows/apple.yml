@@ -19,5 +19,12 @@ jobs:
         run: swift build -c release
       - name: iOS package build
         run: xcodebuild -scheme swift-teleport -destination 'generic/platform=iOS' -configuration Release CODE_SIGNING_ALLOWED=NO build
-      - name: Optional references remain absent
-        run: python3 scripts/check-refs.py
+      - name: Package has no Git submodules
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import subprocess
+          entries = subprocess.check_output(['git', 'ls-files', '--stage'], text=True)
+          if pathlib.Path('.gitmodules').exists() or any(row.startswith('160000 ') for row in entries.splitlines()):
+              raise SystemExit('The package must not contain Git submodules.')
+          PY

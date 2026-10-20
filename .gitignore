@@ -1,7 +1,6 @@
 .build/
 .swiftpm/
 .DS_Store
-refs/*/
 IntegrationTests/.runs/
 IntegrationTests/SSH/.build/
 *.xcuserstate

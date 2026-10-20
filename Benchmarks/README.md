@@ -1,9 +1,15 @@
 # Native SSH benchmarks
 
-Run the optional `TeleportE2E` executable with `benchmark` after starting the
-versioned Docker lab. Use the same fixture and native login as the functional
-suite. Set `TELEPORT_BENCHMARK_OUTPUT` to save the public JSON report. The report
-contains timings and resource counts, with no credentials or node identifiers.
+Supply the external engine required by [TeleportE2E](../docs/SSH-ENGINE.md), then
+run its `benchmark` mode with the pinned lab:
+
+```sh
+TELEPORT_BENCHMARK_OUTPUT=/path/to/report.json \
+  ./IntegrationTests/Scripts/test-e2e.sh --suite full -- /path/to/TeleportE2E benchmark
+```
+
+The report contains timings and resource counts, without credentials or node IDs.
+The wrapper removes the lab. Remove the report and task build files after review.
 
 The benchmark creates a fresh public client with the already validated identity.
 Its first ProxySSH preparation is cold. It then measures warm batches of 1, 10,
@@ -41,27 +47,6 @@ No latency, throughput, or memory budget is inferred from a missing baseline.
 Impaired-network comparison, idle wakeups, CPU, allocation counts, and a
 same-route reference client require separate measurements.
 
-## Recorded local baseline: 20 October 2026
-
-Full samples are in [benchmark-results.json](../docs/benchmark-results.json).
-The native client used a Release build on Apple M5 Max, macOS 27.2, and Swift 6.4.
-Its SSH engine was a temporary libssh2 1.11.1 build with local changes. Those
-changes are removed; these samples do not measure a new upstream engine.
-OrbStack 2.2.4 ran the pinned arm64 Teleport 18.11.4 server.
-The node had 0.5 CPU, 1536 MiB memory, 384 MiB allowed swap, and 512 process slots.
-Auth/Proxy had 1 CPU, 768 MiB memory, and 128 process slots.
-These server limits affect SSH process startup. The client and server run on the same Mac.
-
-| Proxy state | Prepared leases | Proxy prepare p50, ms | SSH setup/command/cleanup p50, ms | SSH p95, ms |
-| --- | ---: | ---: | ---: | ---: |
-| cold | 1 | 48.24 | 186.79 | 186.79 |
-| warm | 1 | 2.85 | 183.90 | 183.90 |
-| warm | 10 | 1.79 | 4780.65 | 5074.07 |
-| warm | 25 | 2.37 | 10941.37 | 11943.54 |
-
-Every warm batch returned to 25 open descriptors after its leases closed.
-The 25-lease batch reached 75 descriptors while prepared. Sign-out reduced the
-count to 24; shared NIO event-loop descriptors remain for the process lifetime.
-Client process peak RSS was 88.36 MiB, including the test harness and SSH engine.
-The verified 1 MiB SFTP round trip reported 3.18 MiB/s aggregate payload, including setup and cleanup.
-This is one baseline with short commands, not a steady terminal-session or bulk-only throughput result.
+Earlier samples used a removed, locally changed SSH engine. They do not validate
+the current upstream engine or define a performance budget. See
+[current test limits](../docs/VALIDATION.md).

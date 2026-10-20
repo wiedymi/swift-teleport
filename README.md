@@ -24,8 +24,8 @@ Use an exact source revision in your app's `Package.swift`:
 ```
 
 In Xcode, add the same URL and select **Commit** with that revision. The app keeps
-its own dependency lock. Optional reference repositories are not submodules or
-package dependencies; package resolution does not fetch them.
+its own dependency lock. The package has no Git submodules and does not fetch
+research repositories.
 
 ## Create one client per profile
 

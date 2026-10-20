@@ -73,23 +73,10 @@ the new size. The SFTP check creates a file with exclusive-create, compares the
 returned bytes, and removes the file. A failed session can leave that file in
 the disposable fixture. The caller supplies an explicit output capacity.
 
-## Historical checks: 20 October 2026
+## Test limits
 
-[The saved report](ssh-engine-results.json) records 34 local SSH checks and eight
-adapter bounds/descriptor checks. Those checks used a temporary libssh2 1.11.1
-build with local changes and the exact recorded OpenSSL 3.2.0 archives and headers.
-The baseline libssh2 1.11.1 archive passed user-certificate tests with a pinned
-plain host key, but failed all five certificate-only host-key checks. The changed test
-build passed all 15 host/user certificate pairs, full host-certificate retrieval,
-invalid certificate and signature rejection, expired user and denied login
-rejection, callback rejection, PTY resize, SFTP, and failed-key-exchange cleanup.
-
-That matrix ran on macOS 27.2 arm64 with Apple clang 21 and OpenSSH 10.5p1.
-iOS and iOS Simulator arm64 archives were built with a 16.1 deployment target;
-macOS used 13.3. A platform build alone does not prove a device session. The
-matrix used Ed25519 CAs and does not establish RSA SHA-256 host negotiation,
-other CA types, FIPS, or physical-device behavior.
-
-The local changes and build scripts are now removed. The saved records remain
-historical results; rerun the checks with the selected upstream build before
-app integration. No SSH engine binary is distributed by this repository.
+Earlier engine checks used a modified libssh2 1.11.1 build. That build and its
+changes are removed. Those results do not validate the selected upstream engine;
+rerun the proof and live tests with matching headers and crypto libraries.
+A platform build alone does not prove a device session. See
+[Validation](VALIDATION.md). No SSH engine binary is distributed by this repository.

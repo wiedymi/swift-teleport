@@ -54,11 +54,6 @@ For automation, launch the app with `--run-smoke` to start the same checks.
 Remove the test app, ignored config, and disposable lab files after the checks.
 Do not archive or distribute an app that contains the test credentials.
 
-On 20 October 2026, the app passed all listed checks on the arm64 iPhone Duo
-Simulator with iOS 27.1, using Teleport 18.11.4 on OrbStack 2.2.4 and a temporary
-libssh2 1.11.1 test build with local changes. The wrong
-HTTPS CA was rejected. Commands checked stdout and stderr on separate leases,
-with exact output and exit status. The PTY check confirmed a live size change
-from 24 by 80 to 43 by 121. SFTP compared 256 KiB exactly and removed its remote
-file. Physical devices and browser SSO were not run. This result does not
-validate a new upstream engine. The earlier local source changes are removed.
+Current upstream libssh2, physical devices, browser SSO, and Secure Enclave
+hardware need separate validation. Earlier simulator results used a removed,
+locally changed engine. See [current test limits](../../docs/VALIDATION.md).
