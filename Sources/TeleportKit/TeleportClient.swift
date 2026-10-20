@@ -90,7 +90,7 @@ public actor TeleportClient {
               !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               otp.isEmpty || ((6...8).contains(otp.utf8.count) && otp.utf8.allSatisfy({ (48...57).contains($0) })),
               otp.isEmpty || browser == nil else { throw TeleportError.invalidConfiguration("device setup input") }
-        try Self.validateDeviceInput(prompt: prompt)
+        try SecureEnclaveDeviceKeyOperations.validatePrompt(prompt)
         guard let store = deviceCredentialStorage else { throw TeleportError.invalidConfiguration("Secure Enclave credentials are not configured") }
         try await changeCredential { [self, proxy, deviceKeyOperations] in
             let identity = try await self.identity()
@@ -106,7 +106,7 @@ public actor TeleportClient {
     public func loginWithSecureEnclave(username: String, password: String, prompt: String, ttl: TimeInterval = 3600) async throws -> TeleportIdentity {
         guard !username.isEmpty, username.utf8.count <= 1024, !password.isEmpty, password.utf8.count <= 65_536,
               ttl.isFinite, ttl >= 60, ttl <= 43_200 else { throw TeleportError.invalidConfiguration("login input") }
-        try Self.validateDeviceInput(prompt: prompt)
+        try SecureEnclaveDeviceKeyOperations.validatePrompt(prompt)
         guard let store = deviceCredentialStorage else { throw TeleportError.invalidConfiguration("Secure Enclave credentials are not configured") }
         return try await sharedLogin(method: .deviceCredential(username)) { [proxy, deviceKeyOperations] in
             try await DeviceCredentialAuthentication.login(proxy: proxy, username: username, password: password, ttl: ttl,
@@ -121,19 +121,12 @@ public actor TeleportClient {
         try await changeCredential { try await store.delete(username: username) }
     }
 
-    private nonisolated static func validateDeviceInput(prompt: String) throws {
-        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, prompt.utf8.count <= 1024,
-              !prompt.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
-            throw TeleportError.invalidConfiguration("biometric prompt")
-        }
-    }
-
     private func changeCredential(operation: @escaping @Sendable () async throws -> Void) async throws {
         try Task.checkCancellation()
         guard case .idle = self.operation else { throw TeleportError.invalidConfiguration("another authentication operation is active") }
         let id = UUID()
         let task = Task {
-            defer { clearCredentialChange(id) }
+            defer { clearOperation(id) }
             try Task.checkCancellation()
             try await operation()
         }
@@ -141,8 +134,10 @@ public actor TeleportClient {
         try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
 
-    private func clearCredentialChange(_ id: UUID) {
-        if case .credentialChange(let pendingID, _) = operation, pendingID == id { operation = .idle(UUID()) }
+    private func clearOperation(_ id: UUID) {
+        // An earlier task must not clear a newer authentication operation.
+        guard operation.id == id else { return }
+        operation = .idle(UUID())
     }
 
     func sharedLogin(method: LoginMethod, operation: @escaping @Sendable () async throws -> TeleportIdentity) async throws -> TeleportIdentity {
@@ -157,16 +152,11 @@ public actor TeleportClient {
         case .idle:
             let id = UUID(), store = identityStore
             task = Task {
-                do {
-                    let result = try await operation()
-                    try Task.checkCancellation()
-                    try await store.replace(with: result)
-                    clearLogin(id)
-                    return result
-                } catch {
-                    clearLogin(id)
-                    throw error
-                }
+                defer { clearOperation(id) }
+                let result = try await operation()
+                try Task.checkCancellation()
+                try await store.replace(with: result)
+                return result
             }
             self.operation = .login(method: method, id: id, task: task)
         }
@@ -177,8 +167,6 @@ public actor TeleportClient {
         }
         return try await SharedTaskWaiter<TeleportIdentity>.wait(for: task)
     }
-
-    private func clearLogin(_ id: UUID) { if case .login(_, let pendingID, _) = operation, pendingID == id { operation = .idle(UUID()) } }
 
     private nonisolated static func localLogin(proxy: TeleportProxy, username: String, password: String, otp: String, ttl: TimeInterval) async throws -> TeleportIdentity {
         let discoveryBytes = try await BoundedHTTP(proxy: proxy).run(path: "v1/webapi/ping")
@@ -210,7 +198,7 @@ public actor TeleportClient {
         return identity
     }
 
-    /// Clear local credentials. This does not revoke credentials held by other clients.
+    /// Clear the issued identity. Keep the device credential; do not revoke server certificates.
     public func signOut() async throws {
         if case .signOut(_, let task) = operation { try await task.value; return }
         let loginTask: Task<TeleportIdentity, any Error>?
@@ -219,19 +207,15 @@ public actor TeleportClient {
         if case .credentialChange(_, let task) = operation { credentialTask = task; task.cancel() } else { credentialTask = nil }
         let id = UUID(), store = identityStore
         let task = Task {
-            do {
-                if let loginTask { _ = try? await loginTask.value }
-                if let credentialTask { _ = try? await credentialTask.value }
-                await transport.reset()
-                try await store.replace(with: nil)
-                clearSignOut(id)
-            } catch { clearSignOut(id); throw error }
+            defer { clearOperation(id) }
+            if let loginTask { _ = try? await loginTask.value }
+            if let credentialTask { _ = try? await credentialTask.value }
+            await transport.reset()
+            try await store.replace(with: nil)
         }
         operation = .signOut(id: id, task: task)
         try await task.value
     }
-
-    private func clearSignOut(_ id: UUID) { if case .signOut(let pendingID, _) = operation, pendingID == id { operation = .idle(UUID()) } }
 
     public func connect(to node: TeleportNode, login: String) async throws -> TeleportConnection {
         let identity = try await identity()

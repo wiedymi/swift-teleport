@@ -63,8 +63,8 @@ enum DeviceAuthRPC {
         return try request.serializedData()
     }
 
-    /// Match Teleport's public WebAuthn creation JSON, so native creation has one validator.
-    static func registrationChallenge(_ bytes: Data) throws -> Data {
+    /// Map the protobuf challenge directly to the options used by the WebAuthn validator.
+    static func registrationChallenge(_ bytes: Data) throws -> DeviceWebAuthn.Creation {
         let response: Teleportkit_Deviceauth_MFARegisterChallenge = try decode(bytes)
         guard case .webauthn(let creation)? = response.request, creation.hasPublicKey else {
             throw TeleportError.invalidResponse("device registration challenge")
@@ -73,24 +73,19 @@ enum DeviceAuthRPC {
         guard options.credentialParameters.count <= 128, options.excludeCredentials.count <= 128 else {
             throw TeleportError.limitExceeded("device registration options")
         }
-        let credentials: [[String: Any]] = options.excludeCredentials.map { ["type": $0.type, "id": $0.id.base64EncodedString()] }
-        let parameters: [[String: Any]] = options.credentialParameters.map { ["type": $0.type, "alg": $0.alg] }
-        let publicKey: [String: Any] = [
-            "challenge": options.challenge.base64EncodedString(),
-            "rp": ["id": options.rp.id, "name": options.rp.name],
-            "user": ["id": options.user.id.base64EncodedString(), "name": options.user.name, "displayName": options.user.displayName],
-            "pubKeyCredParams": parameters,
-            "timeout": options.timeoutMs,
-            "excludeCredentials": credentials,
-            "attestation": options.attestation,
-            "extensions": ["appid": options.extensions.appID, "credProps": options.extensions.credProps],
-            "authenticatorSelection": [
-                "authenticatorAttachment": options.authenticatorSelection.authenticatorAttachment,
-                "requireResidentKey": options.authenticatorSelection.requireResidentKey,
-                "userVerification": options.authenticatorSelection.userVerification,
-            ],
-        ]
-        return try JSONSerialization.data(withJSONObject: ["publicKey": publicKey])
+        return DeviceWebAuthn.Creation(publicKey: .init(
+            rp: .init(id: options.rp.id),
+            user: .init(id: options.user.id, name: options.user.name),
+            challenge: options.challenge,
+            pubKeyCredParams: options.credentialParameters.map { .init(type: $0.type, alg: Int($0.alg)) },
+            excludeCredentials: options.excludeCredentials.map { .init(type: $0.type, id: $0.id) },
+            authenticatorSelection: .init(
+                authenticatorAttachment: options.authenticatorSelection.authenticatorAttachment,
+                requireResidentKey: options.authenticatorSelection.requireResidentKey,
+                userVerification: options.authenticatorSelection.userVerification
+            ),
+            attestation: options.attestation
+        ))
     }
 
     static func addRequest(deviceName: String, credentialID: Data, clientDataJSON: Data, attestationObject: Data) throws -> Data {

@@ -57,12 +57,12 @@ final class UnaryHandler: ChannelInboundHandler, @unchecked Sendable {
             case .data(let part):
                 try status.data(endStream: part.endStream)
                 guard case .byteBuffer(var bytes) = part.data else { throw TransportError.invalidResponse }
-                var messages: [Data] = []
-                try decoder.append(&bytes) { messages.append(Data($0.readableBytesView)) }
-                guard messages.count <= 1, response == nil || messages.isEmpty else {
-                    throw TransportError.invalidResponse
+                var received = response
+                try decoder.append(&bytes) { message in
+                    guard received == nil else { throw TransportError.invalidResponse }
+                    received = Data(message.readableBytesView)
                 }
-                if let message = messages.first { response = message }
+                response = received
             case .rstStream: throw TransportError.closed
             default: break
             }

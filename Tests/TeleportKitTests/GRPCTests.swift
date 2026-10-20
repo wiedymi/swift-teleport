@@ -115,6 +115,28 @@ private let initialHeaders = HPACKHeaders([(":status", "200"), ("content-type", 
     }
 }
 
+@Test(arguments: [true, false])
+func unaryRejectsMultipleResponses(inOneFrame: Bool) throws {
+    let channel = EmbeddedChannel()
+    let result = channel.eventLoop.makePromise(of: Data.self)
+    try channel.pipeline.addHandler(UnaryHandler(
+        path: "/example/RPC", authority: "example.test", request: Data(), result: result
+    )).wait()
+    try channel.connect(to: .init(ipAddress: "127.0.0.1", port: 1)).wait()
+    try channel.writeInbound(HTTP2Frame.FramePayload.headers(.init(headers: initialHeaders)))
+    var first = try grpcMessage(Data("first".utf8), allocator: channel.allocator)
+    var second = try grpcMessage(Data("second".utf8), allocator: channel.allocator)
+    if inOneFrame {
+        first.writeBuffer(&second)
+        try channel.writeInbound(HTTP2Frame.FramePayload.data(.init(data: .byteBuffer(first))))
+    } else {
+        try channel.writeInbound(HTTP2Frame.FramePayload.data(.init(data: .byteBuffer(first))))
+        try channel.writeInbound(HTTP2Frame.FramePayload.data(.init(data: .byteBuffer(second))))
+    }
+    #expect(throws: TransportError.invalidResponse) { try result.futureResult.wait() }
+    _ = try channel.finish(acceptAlreadyClosed: true)
+}
+
 @Test func socketPairIsNonblockingAndDoesNotInheritAcrossExec() throws {
     let pair = try makeSocketPair()
     defer { Darwin.close(pair.ssh); Darwin.close(pair.pump) }

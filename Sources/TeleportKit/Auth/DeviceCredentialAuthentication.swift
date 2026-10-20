@@ -22,33 +22,39 @@ enum DeviceCredentialAuthentication {
         let callback = try presenter.map { _ in try BrowserCallback() }
         defer { callback?.close() }
         let callbackURL = try await callback?.start()
-        let challenge = try await rpc(DeviceAuthRPC.authenticatePath, DeviceAuthRPC.authenticationRequest(proxy: proxy, callbackURL: callbackURL))
-        let approval: BrowserMFAResponse?
-        let code: String?
+        let authenticationRequest = try DeviceAuthRPC.authenticationRequest(proxy: proxy, callbackURL: callbackURL)
+        let challenge = try await rpc(DeviceAuthRPC.authenticatePath, authenticationRequest)
+        let registrationRequest: Data
         switch try DeviceAuthRPC.managementChallenge(challenge) {
-        case .none: approval = nil; code = nil
+        case .none:
+            registrationRequest = try DeviceAuthRPC.registrationRequest()
         case .totp:
             guard presenter == nil else { throw TeleportError.unsupportedPolicy(.browserMFA) }
             guard !otp.isEmpty else { throw TeleportError.invalidConfiguration("a fresh TOTP code is required for setup") }
-            approval = nil; code = otp
+            registrationRequest = try DeviceAuthRPC.registrationRequest(otp: otp)
         case .browser(let id):
             guard let callback, let presenter else {
                 throw TeleportError.unsupportedPolicy(.browserMFA)
             }
-            approval = try await BrowserMFAApproval.receive(proxy: proxy, requestID: id, callback: callback, presenter: presenter); code = nil
+            let approval = try await BrowserMFAApproval.receive(
+                proxy: proxy, requestID: id, callback: callback, presenter: presenter
+            )
+            registrationRequest = try DeviceAuthRPC.registrationRequest(approval: approval)
         }
         try Task.checkCancellation()
-        let bytes = try await rpc(DeviceAuthRPC.registrationPath, DeviceAuthRPC.registrationRequest(approval: approval, otp: code))
-        let creation: DeviceWebAuthn.Creation = try DeviceWebAuthn.decode(DeviceAuthRPC.registrationChallenge(bytes), field: "WebAuthn creation challenge")
+        let bytes = try await rpc(DeviceAuthRPC.registrationPath, registrationRequest)
+        let creation = try DeviceAuthRPC.registrationChallenge(bytes)
         try creation.validate(proxy: proxy, username: identity.username)
         let key = try await keys.create(prompt: prompt)
         try Task.checkCancellation()
         let registration = try await DeviceWebAuthn.registration(challenge: creation, proxy: proxy, username: identity.username,
                                                                 key: key, keys: keys, prompt: prompt)
         try Task.checkCancellation()
-        let added = try await rpc(DeviceAuthRPC.addPath, DeviceAuthRPC.addRequest(deviceName: name, credentialID: registration.credentialID,
-                                                                                clientDataJSON: registration.clientDataJSON,
-                                                                                attestationObject: registration.attestationObject))
+        let addRequest = try DeviceAuthRPC.addRequest(
+            deviceName: name, credentialID: registration.credentialID,
+            clientDataJSON: registration.clientDataJSON, attestationObject: registration.attestationObject
+        )
+        let added = try await rpc(DeviceAuthRPC.addPath, addRequest)
         try DeviceAuthRPC.validateAddedDevice(added, credentialID: registration.credentialID,
                                              rpID: creation.publicKey.rp.id, publicKeyCOSE: registration.publicKeyCOSE)
         try Task.checkCancellation()

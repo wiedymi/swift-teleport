@@ -4,25 +4,33 @@ import TeleportCore
 
 /// Only the non-resident ES256 MFA credential used by this library is supported.
 enum DeviceWebAuthn {
-    struct Descriptor: Decodable { let type: String; let id: Data }
-    struct Selection: Decodable {
-        let authenticatorAttachment: String?
-        let requireResidentKey: Bool?
-        let residentKey: String?
-        let userVerification: String?
+    struct Descriptor: Decodable {
+        let type: String
+        let id: Data
     }
-    struct Creation: Decodable {
-        struct Options: Decodable {
-            struct RP: Decodable { let id: String }
-            struct User: Decodable { let id: Data; let name: String }
-            struct Parameter: Decodable { let type: String; let alg: Int }
+    struct Selection {
+        let authenticatorAttachment: String
+        let requireResidentKey: Bool
+        let userVerification: String
+    }
+    struct Creation {
+        struct Options {
+            struct RP { let id: String }
+            struct User {
+                let id: Data
+                let name: String
+            }
+            struct Parameter {
+                let type: String
+                let alg: Int
+            }
             let rp: RP
             let user: User
             let challenge: Data
             let pubKeyCredParams: [Parameter]
-            let excludeCredentials: [Descriptor]?
-            let authenticatorSelection: Selection?
-            let attestation: String?
+            let excludeCredentials: [Descriptor]
+            let authenticatorSelection: Selection
+            let attestation: String
         }
         let publicKey: Options
 
@@ -30,19 +38,18 @@ enum DeviceWebAuthn {
             try DeviceWebAuthn.validate(rpID: publicKey.rp.id, challenge: publicKey.challenge, proxy: proxy)
             guard publicKey.user.name == username, !publicKey.user.id.isEmpty, publicKey.user.id.count <= 64,
                   publicKey.pubKeyCredParams.count <= 32,
-                  (publicKey.excludeCredentials?.count ?? 0) <= 128 else { throw TeleportError.invalidResponse("WebAuthn registration binding") }
+                  publicKey.excludeCredentials.count <= 128 else { throw TeleportError.invalidResponse("WebAuthn registration binding") }
             guard publicKey.pubKeyCredParams.contains(where: { $0.type == "public-key" && $0.alg == -7 }),
-                  publicKey.attestation == nil || publicKey.attestation == "" || publicKey.attestation == "none" else {
+                  publicKey.attestation.isEmpty || publicKey.attestation == "none" else {
                 throw TeleportError.unsupportedPolicy(.authenticatorRequirements)
             }
             let selection = publicKey.authenticatorSelection
-            guard selection?.requireResidentKey != true,
-                  ["", "discouraged", "preferred"].contains(selection?.residentKey ?? ""),
-                  ["", "platform"].contains(selection?.authenticatorAttachment ?? ""),
-                  ["", "discouraged", "preferred", "required"].contains(selection?.userVerification ?? "") else {
+            guard !selection.requireResidentKey,
+                  ["", "platform"].contains(selection.authenticatorAttachment),
+                  ["", "discouraged", "preferred", "required"].contains(selection.userVerification) else {
                 throw TeleportError.unsupportedPolicy(.authenticatorRequirements)
             }
-            try DeviceWebAuthn.validate(descriptors: publicKey.excludeCredentials ?? [])
+            try DeviceWebAuthn.validate(descriptors: publicKey.excludeCredentials)
         }
     }
     struct AssertionChallenge: Decodable {
@@ -79,29 +86,47 @@ enum DeviceWebAuthn {
               let publicKey = try? P256.Signing.PublicKey(x963Representation: key.publicKeyX963) else {
             throw TeleportError.invalidResponse("device public key")
         }
-        let id = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
-        guard !(challenge.publicKey.excludeCredentials ?? []).contains(where: { $0.id == id }) else {
+        let credentialID = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        guard !challenge.publicKey.excludeCredentials.contains(where: { $0.id == credentialID }) else {
             throw TeleportError.deviceCredentialExists
         }
         let clientData = try clientData(type: "webauthn.create", challenge: challenge.publicKey.challenge, proxy: proxy)
-        // Fixed COSE EC2/P-256/ES256 map. No general CBOR parser or authenticator framework is needed.
-        var cose = Data([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20])
-        cose.append(key.publicKeyX963.dropFirst().prefix(32)); cose.append(contentsOf: [0x22, 0x58, 0x20]); cose.append(key.publicKeyX963.suffix(32))
-        var auth = authenticatorData(rpID: challenge.publicKey.rp.id, flags: 0x45)
-        auth.append(Data(repeating: 0, count: 16)) // No vendor attestation identifier.
-        auth.append(contentsOf: [0, 32]); auth.append(id); auth.append(cose)
-        // fmt:none has no attestation signature. Still use the protected key so UP/UV reflect a biometric check.
-        let signed = auth + Data(SHA256.hash(data: clientData))
-        let signatureBytes = try await keys.sign(signed, protectedKey: key.protectedKey, prompt: prompt)
+        // Fixed COSE map: EC2 key, ES256 algorithm, P-256 curve, then X and Y coordinates.
+        var publicKeyCOSE = Data([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20])
+        publicKeyCOSE.append(key.publicKeyX963.dropFirst().prefix(32))
+        publicKeyCOSE.append(contentsOf: [0x22, 0x58, 0x20])
+        publicKeyCOSE.append(key.publicKeyX963.suffix(32))
+
+        var authData = authenticatorData(rpID: challenge.publicKey.rp.id, flags: 0x45)
+        authData.append(Data(repeating: 0, count: 16)) // No vendor attestation identifier.
+        authData.append(contentsOf: [0, 32]) // Two-byte length for the 32-byte credential ID.
+        authData.append(credentialID)
+        authData.append(publicKeyCOSE)
+
+        // fmt:none carries no signature. A local signature check still requires biometrics and binds this key.
+        let signedData = authData + Data(SHA256.hash(data: clientData))
+        let signatureBytes = try await keys.sign(signedData, protectedKey: key.protectedKey, prompt: prompt)
         try Task.checkCancellation()
         guard let signature = try? P256.Signing.ECDSASignature(derRepresentation: signatureBytes),
-              publicKey.isValidSignature(signature, for: signed) else { throw TeleportError.invalidResponse("device authentication key") }
-        guard auth.count <= 255 else { throw TeleportError.limitExceeded("WebAuthn attestation") }
-        var attestation = Data([0xa3, 0x63])
-        attestation.append(Data("fmt".utf8)); attestation.append(0x64); attestation.append(Data("none".utf8))
-        attestation.append(0x67); attestation.append(Data("attStmt".utf8)); attestation.append(0xa0)
-        attestation.append(0x68); attestation.append(Data("authData".utf8)); attestation.append(contentsOf: [0x58, UInt8(auth.count)]); attestation.append(auth)
-        return Registration(credentialID: id, clientDataJSON: clientData, attestationObject: attestation, publicKeyCOSE: cose)
+              publicKey.isValidSignature(signature, for: signedData) else {
+            throw TeleportError.invalidResponse("device authentication key")
+        }
+
+        guard authData.count <= 255 else { throw TeleportError.limitExceeded("WebAuthn attestation") }
+        // CBOR map with fmt:"none", attStmt:{}, and the authenticator data.
+        var attestationObject = Data([0xa3, 0x63])
+        attestationObject.append(contentsOf: "fmt".utf8)
+        attestationObject.append(0x64)
+        attestationObject.append(contentsOf: "none".utf8)
+        attestationObject.append(0x67)
+        attestationObject.append(contentsOf: "attStmt".utf8)
+        attestationObject.append(0xa0)
+        attestationObject.append(0x68)
+        attestationObject.append(contentsOf: "authData".utf8)
+        attestationObject.append(contentsOf: [0x58, UInt8(authData.count)])
+        attestationObject.append(authData)
+        return Registration(credentialID: credentialID, clientDataJSON: clientData,
+                            attestationObject: attestationObject, publicKeyCOSE: publicKeyCOSE)
     }
 
     static func assertion(challenge: AssertionChallenge, credential: DeviceCredential, proxy: TeleportProxy,

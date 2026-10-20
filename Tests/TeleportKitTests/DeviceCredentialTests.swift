@@ -7,12 +7,10 @@ import XCTest
 final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
     func testRegistrationRejectsWrongAccountRPAndUnsupportedAuthenticatorRequirements() throws {
         let proxy = try Self.proxy()
-        let valid: DeviceWebAuthn.Creation = try DeviceWebAuthn.decode(
-            DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation()), field: "test creation")
+        let valid = try DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation())
         try valid.validate(proxy: proxy, username: "alice")
         for fault in [DeviceTestServer.CreationFault.rp, .account, .algorithm, .attestation, .resident, .attachment] {
-            let challenge: DeviceWebAuthn.Creation = try DeviceWebAuthn.decode(
-                DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation(fault: fault)), field: "test creation")
+            let challenge = try DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation(fault: fault))
             XCTAssertThrowsError(try challenge.validate(proxy: proxy, username: "alice"))
         }
     }
@@ -20,8 +18,7 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
     func testRegistrationRequiresTheMatchingSigningKeyAndAcceptsSlicedPublicKeyData() async throws {
         let proxy = try Self.proxy(), keys = DeviceTestKeys()
         let material = try await keys.create(prompt: "Test approval")
-        let challenge: DeviceWebAuthn.Creation = try DeviceWebAuthn.decode(
-            DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation()), field: "test creation")
+        let challenge = try DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation())
         let unrelatedPoint = P256.Signing.PrivateKey().publicKey.x963Representation
         let mismatched = DeviceKeyMaterial(protectedKey: material.protectedKey, publicKeyX963: unrelatedPoint)
         do {

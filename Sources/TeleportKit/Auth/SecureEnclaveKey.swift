@@ -17,7 +17,7 @@ protocol DeviceKeyOperations: Sendable {
 
 struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
     func create(prompt: String) async throws -> DeviceKeyMaterial {
-        try validatePrompt(prompt)
+        try Self.validatePrompt(prompt)
         let authentication = AuthenticationPrompt(reason: prompt)
         defer { authentication.context.invalidate() }
         return try await withTaskCancellationHandler {
@@ -45,7 +45,7 @@ struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
     }
 
     func sign(_ data: Data, protectedKey: Data, prompt: String) async throws -> Data {
-        try validatePrompt(prompt)
+        try Self.validatePrompt(prompt)
         guard !protectedKey.isEmpty, protectedKey.count <= 16_384 else { throw TeleportError.deviceCredentialMissing }
         let authentication = AuthenticationPrompt(reason: prompt)
         defer { authentication.context.invalidate() }
@@ -77,7 +77,7 @@ struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
         }
     }
 
-    private func validatePrompt(_ prompt: String) throws {
+    static func validatePrompt(_ prompt: String) throws {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, prompt.utf8.count <= 1024,
               !prompt.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw TeleportError.invalidConfiguration("biometric prompt")
