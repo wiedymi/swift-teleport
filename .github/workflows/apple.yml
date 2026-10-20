@@ -1,0 +1,23 @@
+name: Apple package
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Unit and protocol fault tests
+        run: swift test
+      - name: Release build
+        run: swift build -c release
+      - name: iOS package build
+        run: xcodebuild -scheme swift-teleport -destination 'generic/platform=iOS' -configuration Release CODE_SIGNING_ALLOWED=NO build
+      - name: Optional references remain absent
+        run: python3 scripts/check-refs.py

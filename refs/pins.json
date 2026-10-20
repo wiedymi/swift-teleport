@@ -1,0 +1,13 @@
+{
+  "teleportAPI": {
+    "repository": "https://github.com/gravitational/teleport",
+    "revision": "1283425b60ec5f60d509ba4c791183d452923ff7",
+    "allowedPath": "api/",
+    "license": "Apache-2.0"
+  },
+  "reviewReference": {
+    "repository": "https://github.com/cad0p/swift-teleport",
+    "revision": "77a6bec824f079ce48468ac9a3cad3dda038d3d7",
+    "role": "review only, no code import"
+  }
+}

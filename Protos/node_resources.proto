@@ -1,0 +1,38 @@
+// Copyright 2025 Gravitational, Inc.
+// Licensed under the Apache License, Version 2.0.
+// https://www.apache.org/licenses/LICENSE-2.0
+//
+// Modified: a wire-compatible subset for root-cluster SSH resource lookup.
+// Source revision 1283425b60ec5f60d509ba4c791183d452923ff7:
+// api/proto/teleport/legacy/client/proto/authservice.proto
+// api/proto/teleport/legacy/types/types.proto
+// api/proto/teleport/legacy/types/metadata.proto
+syntax = "proto3";
+package teleportkit.resources;
+
+message ListResourcesRequest {
+  string resource_type = 1;
+  string namespace = 2;
+  int32 limit = 3;
+  string start_key = 4;
+  bool include_logins = 13;
+}
+message ListResourcesResponse {
+  repeated Resource resources = 1;
+  string next_key = 2;
+}
+message Resource {
+  Server node = 3;
+  repeated string logins = 13;
+  bool requires_request = 14;
+}
+message Server {
+  string kind = 1;
+  Metadata metadata = 4;
+  Spec spec = 5;
+}
+message Metadata {
+  string name = 1;
+  map<string, string> labels = 5;
+}
+message Spec { string hostname = 3; }
