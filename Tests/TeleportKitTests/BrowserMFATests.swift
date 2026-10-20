@@ -42,6 +42,24 @@ final class BrowserMFATests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testBrowserAssertionAcceptsPaddingAndRejectsMismatchedIDsNoncanonicalBitsAndLongUserHandle() throws {
+        var valid = BrowserMFAHTTPFixture.assertion
+        valid["id"] = "AQI="; valid["rawId"] = "AQI"
+        valid["response"] = ["clientDataJSON": "e30=", "authenticatorData": "AQI=", "signature": "BAU=", "userHandle": "BwgJ"]
+        func assertion(_ value: [String: Any]) throws -> BrowserMFAAssertion {
+            try JSONDecoder().decode(BrowserMFAAssertion.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        try assertion(valid).validate()
+        var mismatched = valid; mismatched["rawId"] = "AQID"
+        var noncanonical = valid; noncanonical["id"] = "AQJ="; noncanonical["rawId"] = "AQJ"
+        var longHandle = valid
+        var response = try XCTUnwrap(valid["response"] as? [String: String])
+        response["userHandle"] = Data(repeating: 7, count: 65).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").filter { $0 != "=" }
+        longHandle["response"] = response
+        for invalid in [mismatched, noncanonical, longHandle] { XCTAssertThrowsError(try assertion(invalid).validate()) }
+    }
+
     func testAbsentOrInvalidBrowserChallengeDoesNotOpenBrowserOrRequestCertificates() async throws {
         for challenge in [
             "{\"totp_challenge\":true}",

@@ -11,13 +11,13 @@ loopback transport is shared.
 
 Current checks:
 
-- `swift test`: 44 passed, one live test skipped. All 33 prior tests passed,
+- `swift test`: 45 passed, one live test skipped. All 33 prior tests passed,
   including password/TOTP request fields, SSO callback authentication and tamper
   rejection, certificate validation, and transport checks.
-- Eleven new focused tests cover discovery hints, missing/invalid challenges,
+- Twelve new focused tests cover discovery hints, missing/invalid challenges,
   invalid assertions, invalid callbacks followed by a valid callback, cancellation,
   timeout, input bounds, separate pending authentication methods, shared waiter
-  cancellation, failed storage, and account/root/SSH/TLS key binding.
+  cancellation, base64 format boundaries, failed storage, and account/root/SSH/TLS key binding.
 - Three of those tests use a mock certificate endpoint that signs the actual new
   native public keys. They ran on macOS using an existing OpenSSL 3 installation.
   They skip if that test tool is absent; no new dependency is installed.
@@ -27,11 +27,20 @@ Current checks:
 - Five Python lab checks, three JavaScript syntax checks, shell syntax, optional
   reference checks, and diff checks passed.
 
-The real-server attempt used the exact pinned Teleport 18.11.4 image. The pull
-made no layer progress for five minutes and was stopped. No alternate image was
-used. No container or credential was created. The new browser MFA lab and its
-password/TOTP regression step have not run against the server. Historical
-password/TOTP results below are not a rerun for this change.
+The real-server attempt used the exact pinned Teleport 18.11.4 image. Its first
+pull command showed no layer progress for five minutes and was stopped. The
+Docker service later completed the download. A second attempt reached the pinned
+Chromium fixture build, but its 233 MB package download could not finish within
+the existing 15-minute build limit. No version was substituted, no TLS check was
+disabled, and no system trust setting was changed. Auth startup and user enrollment
+did not run. The new browser MFA test and its password/TOTP regression step have
+not run against the server. Historical password/TOTP results below are separate.
+
+Apple CI passed for the consumer-pinned commit `dd0ee2c`. Linux fixture CI at
+that commit downloaded and built the images but failed before server readiness:
+the process ran as UID 0 without capabilities and could not read the private
+config owned by runner UID 1001. The safe diagnostics confirmed the file and
+permission failure. This lab ownership issue remains open; modes were not loosened.
 
 The optional live test provisions a virtual WebAuthn key through test tools, then
 calls the public library API. Its private file relay carries the encrypted callback

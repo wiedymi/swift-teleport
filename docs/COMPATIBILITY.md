@@ -27,7 +27,8 @@ Local browser MFA uses an existing passkey or security key in the browser and
 then requests SSH/TLS certificates. The protocol was checked against source pin
 `1283425b60ec5f60d509ba4c791183d452923ff7`. The current browser MFA change has
 mock-server certificate tests and native loopback tests. Its real Teleport
-18.11.4 test is pending: the exact pinned image could not be downloaded.
+18.11.4 test is pending: the pinned Chromium fixture build exceeded its download
+time limit. Auth startup and user enrollment did not run for that attempt.
 Physical keys and passkeys, browser UI, and device lifecycle are not verified by
 these tests. Existing historical password/TOTP server results remain separate.
 

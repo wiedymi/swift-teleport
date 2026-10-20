@@ -72,11 +72,12 @@ authentication to the library. The browser has only its test credential files an
 public HTTPS CA. These files are deleted with the lab and must not be uploaded.
 
 This new mode has **not run against the pinned server**. On 20 October 2026, the
-exact image pull made no layer progress for five minutes and was stopped. The
-latest Linux CI run also failed before server startup with an ECR data-limit
-error. No image tag or server version was substituted. Syntax and unit checks of
-the tools do not establish real browser MFA support. Real-provider SSO remains
-outside this lab.
+first pinned server image pull showed no progress for five minutes. After that
+command stopped, Docker completed the download. The next attempt reached the
+pinned Chromium fixture build, but its 233 MB package download did not finish
+within the 15-minute limit. Auth startup and enrollment did not run. No version,
+TLS check, or system trust setting was changed. Syntax and unit checks do not
+establish real browser MFA support. Real-provider SSO remains outside this lab.
 
 The proxy binds only `127.0.0.1`. The macOS and iOS Simulator clients use this same fixture and receive its public HTTPS CA through `TeleportProxy`. No system trust change is needed. Physical device tests need a separate reachable test environment and are outside this local run.
 
@@ -137,7 +138,7 @@ does not download or build that engine.
 
 On 20 October 2026, two independent full runs completed real browser enrollment and the infrastructure control checks on Apple M5 Max hardware, macOS 27.2, and a native arm64 Colima 0.10.3 VM (4 CPUs, 4 GiB RAM). Docker Engine was 29.5.2 and Compose was 5.6.0. A separate PTY/tmux check passed with the four listed node capabilities. One full run was removed twice; its local secrets and all of its Docker containers, volumes, and networks were absent after teardown.
 
-The default test wrapper also runs this same control suite and removes its own run. Recent Linux workflow attempts failed before server startup because ECR denied the pinned image pull. AMD64 registry manifests were checked; AMD64 execution and physical devices have not been tested in this local validation. These results establish the server fixture only. Native Swift results are recorded separately.
+The default test wrapper also runs this same control suite and removes its own run. Earlier Linux workflow attempts failed on ECR download limits. The latest attempt built the images, then failed at Auth readiness: the server process could not read the private config owned by the runner UID. Its safe diagnostics confirmed that access failure. File modes were not loosened; Linux ownership still needs a fix and a real rerun. AMD64 execution and physical devices are not established by the historical local results. Native Swift results are recorded separately.
 
 A new full run also passed on OrbStack 2.2.4 with Docker Engine 29.8.2, using the same locked images. It completed real browser enrollment and all eight infrastructure checks. A separate OpenSSL probe used the native login identity to complete verified Auth mTLS with SNI `teleport.cluster.local` and negotiated `h2`. The earlier task Colima VM, its disk, and its test runs were removed when the runtime changed to OrbStack.
 
