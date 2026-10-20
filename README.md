@@ -37,8 +37,8 @@ Read [the integration contract](docs/INTEGRATION.md),
 [the SSH engine requirements](docs/SSH-ENGINE.md).
 
 SSH integration tests require a caller-supplied compatible upstream libssh2
-build. This repository does not download or build an SSH engine. VVTerm's
-existing engine needs an upstream update when Teleport integration starts.
+build with matching crypto libraries. This repository does not download or build
+an SSH engine.
 
 ## Checks
 

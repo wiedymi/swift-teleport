@@ -27,10 +27,11 @@ python3 IntegrationTests/Scripts/prepare-apple-smoke.py /path/to/client/fixture.
 
 Supply a compatible upstream libssh2 build for each SDK. Pass `SSH_ENGINE_ROOT`
 to Xcode. It must contain `include/`, `ios/lib/libssh2.a`, and
-`ios-simulator/lib/libssh2.a`. `SSH_CRYPTO_ROOT` defaults to VVTerm's checked-in
-OpenSSL libraries. The engine must use matching OpenSSL headers and archives.
+`ios-simulator/lib/libssh2.a`. Pass `SSH_CRYPTO_ROOT` for the matching OpenSSL
+archives under `ios/lib/libcrypto.a` and `ios-simulator/lib/libcrypto.a`.
+The engine must use matching OpenSSL headers and archives.
 See [the engine contract](../../docs/SSH-ENGINE.md). This repository does not
-download or build the engine. The app does not modify VVTerm or its vendor files.
+download or build the engine.
 Secure storage and the SSH engine remain the consuming app's responsibility.
 
 The default is an arm64 iOS Simulator build with the default Xcode build cache:
@@ -39,7 +40,8 @@ The default is an arm64 iOS Simulator build with the default Xcode build cache:
 xcodebuild -project Examples/AppleSmoke/TeleportSmoke.xcodeproj \
   -scheme TeleportSmoke -configuration Debug \
   -destination 'generic/platform=iOS Simulator' \
-  SSH_ENGINE_ROOT=/path/to/upstream-engine CODE_SIGNING_ALLOWED=NO build
+  SSH_ENGINE_ROOT=/path/to/upstream-engine SSH_CRYPTO_ROOT=/path/to/matching-crypto \
+  CODE_SIGNING_ALLOWED=NO build
 ```
 
 Open the project in Xcode, select an arm64 iOS Simulator, and run the app.

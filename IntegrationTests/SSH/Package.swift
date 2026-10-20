@@ -3,16 +3,14 @@ import Foundation
 import PackageDescription
 
 let environment = ProcessInfo.processInfo.environment
-let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let defaultVendor = environment["VVTERM_ROOT"].map { "\($0)/Vendor/libssh2" } ?? packageDirectory
-    .appendingPathComponent("../../../../vivy-company/vvterm/Vendor/libssh2")
-    .standardizedFileURL.path
 let engineRoot = environment["TELEPORT_LIBSSH2_ROOT"]
 guard let headers = environment["TELEPORT_LIBSSH2_INCLUDE"] ?? engineRoot.map({ "\($0)/include" }),
       let sshLibrary = environment["TELEPORT_LIBSSH2_LIBRARY"] ?? engineRoot.map({ "\($0)/lib/libssh2.a" }) else {
     fatalError("Supply a compatible upstream engine with TELEPORT_LIBSSH2_ROOT, or both TELEPORT_LIBSSH2_INCLUDE and TELEPORT_LIBSSH2_LIBRARY.")
 }
-let cryptoLibrary = environment["TELEPORT_LIBCRYPTO_LIBRARY"] ?? "\(defaultVendor)/macos/lib/libcrypto.a"
+guard let cryptoLibrary = environment["TELEPORT_LIBCRYPTO_LIBRARY"] else {
+    fatalError("Supply the matching static OpenSSL archive with TELEPORT_LIBCRYPTO_LIBRARY.")
+}
 
 let package = Package(
     name: "TeleportE2E",

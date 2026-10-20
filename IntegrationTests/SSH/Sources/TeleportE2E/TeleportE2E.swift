@@ -153,7 +153,7 @@ func require(_ condition: Bool, _ message: String) throws {
                 }
             }
         }
-        try require(identity.isUsable() && identity.clusterName == fixture.clusterName && identity.allowedLogins.contains("vvterm-test"), "Issued identity validation")
+        try require(identity.isUsable() && identity.clusterName == fixture.clusterName && identity.allowedLogins.contains("teleport-test"), "Issued identity validation")
         // This roundtrip verifies the public atomic-store record, not tctl output.
         let decoded = try JSONDecoder().decode(TeleportIdentity.self, from: JSONEncoder().encode(identity))
         try require(decoded.tlsCertificateDER == identity.tlsCertificateDER, "Identity storage roundtrip")
@@ -170,33 +170,33 @@ func require(_ condition: Bool, _ message: String) throws {
         }
         for fixtureNode in allowed {
             guard let node = nodes.first(where: { $0.id == fixtureNode.id }) else { throw HarnessFailure(description: "Expected node missing") }
-            let connection = try await client.connect(to: node, login: "vvterm-test")
-            let result = try await runSSH(connection, command: "printf VVTERM_NATIVE_OK; exit 7")
+            let connection = try await client.connect(to: node, login: "teleport-test")
+            let result = try await runSSH(connection, command: "printf TELEPORT_NATIVE_OK; exit 7")
             await connection.close()
-            try require(result.code == 0 && result.exit == 7 && result.output == Data("VVTERM_NATIVE_OK".utf8),
+            try require(result.code == 0 && result.exit == 7 && result.output == Data("TELEPORT_NATIVE_OK".utf8),
                         "SSH command failed (result \(result.code), native \(result.native), exit \(result.exit))")
-            let errorConnection = try await client.connect(to: node, login: "vvterm-test")
-            let errorResult = try await runSSH(errorConnection, command: "printf VVTERM_STDERR >&2; exit 9")
+            let errorConnection = try await client.connect(to: node, login: "teleport-test")
+            let errorResult = try await runSSH(errorConnection, command: "printf TELEPORT_STDERR >&2; exit 9")
             await errorConnection.close()
-            try require(errorResult.code == 0 && errorResult.exit == 9 && errorResult.output == Data("VVTERM_STDERR".utf8),
+            try require(errorResult.code == 0 && errorResult.exit == 9 && errorResult.output == Data("TELEPORT_STDERR".utf8),
                         "SSH stderr command failed (result \(errorResult.code), native \(errorResult.native), exit \(errorResult.exit))")
             print("PASS native ProxySSH, host CA, user certificate, command, stderr and exit status: \(fixtureNode.name)")
         }
         guard let node = nodes.first else { throw HarnessFailure(description: "No allowed node") }
-        let terminal = try await client.connect(to: node, login: "vvterm-test")
+        let terminal = try await client.connect(to: node, login: "teleport-test")
         let pty = try await runSSH(terminal, command: "sh -c 'test \"$(stty size)\" = \"24 80\" || exit 99; trap \"stty size; exit\" WINCH; printf \"<teleport-pty-ready>\"; while :; do read -r ignored; done'", operation: TELEPORT_SSH_PTY_RESIZE)
         await terminal.close()
         try require(pty.code == 0 && String(decoding: pty.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "43 121", "PTY resize (result \(pty.code), native \(pty.native), output \(String(reflecting: String(decoding: pty.output, as: UTF8.self))))")
         print("PASS native PTY and resize")
-        let fileConnection = try await client.connect(to: node, login: "vvterm-test")
+        let fileConnection = try await client.connect(to: node, login: "teleport-test")
         let payload = Data((0..<262_144).map { UInt8($0 & 255) })
         let file = try await runSSH(fileConnection, command: "", operation: TELEPORT_SSH_SFTP_ROUNDTRIP,
                                    input: payload, sftpPath: "/tmp/teleport-native-" + UUID().uuidString)
         await fileConnection.close()
         try require(file.code == 0 && file.output == payload, "SFTP roundtrip or cleanup")
         print("PASS native SFTP 256 KiB write/read/remove")
-        let concurrentA = try await client.connect(to: node, login: "vvterm-test")
-        let concurrentB = try await client.connect(to: node, login: "vvterm-test")
+        let concurrentA = try await client.connect(to: node, login: "teleport-test")
+        let concurrentB = try await client.connect(to: node, login: "teleport-test")
         async let resultA = runSSH(concurrentA, command: "printf SHARED_A")
         async let resultB = runSSH(concurrentB, command: "printf SHARED_B")
         let results = try await (resultA, resultB)
@@ -206,7 +206,7 @@ func require(_ condition: Bool, _ message: String) throws {
 
         do { _ = try await client.connect(to: node, login: "root"); throw HarnessFailure(description: "Disallowed principal was accepted") }
         catch TeleportError.invalidConfiguration { print("PASS disallowed principal") }
-        let rejection = try await client.connect(to: node, login: "vvterm-test")
+        let rejection = try await client.connect(to: node, login: "teleport-test")
         let rejected = try await runSSH(rejection, command: "printf SHOULD_NOT_RUN", rejectHost: true)
         await rejection.close()
         try require(rejected.code == Int(TELEPORT_SSH_HOST_TRUST.rawValue) && rejected.output.isEmpty, "Host trust rejection")
@@ -214,7 +214,7 @@ func require(_ condition: Bool, _ message: String) throws {
         guard let denied = fixture.nodes.first(where: { !$0.authorized }) else { throw HarnessFailure(description: "No denied-node fixture") }
         let deniedNode = try TeleportNode(id: denied.id, name: denied.name, clusterName: fixture.clusterName)
         do {
-            let connection = try await client.connect(to: deniedNode, login: "vvterm-test")
+            let connection = try await client.connect(to: deniedNode, login: "teleport-test")
             let result = try await runSSH(connection, command: "printf SHOULD_NOT_RUN")
             await connection.close()
             try require(result.code == Int(TELEPORT_SSH_AUTH.rawValue) && result.output.isEmpty,

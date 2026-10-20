@@ -188,7 +188,7 @@
   "openssl_source_sha256": "14c826f07c7e433706fb5c69fa9e25dab95684844b4c962a2cf1bf183eb4690e",
   "build_header_version": "OpenSSL 3.2.0",
   "linked_crypto_version": "OpenSSL 3.2.0",
-  "vvterm_artifacts_sha256": {
+  "historical_baseline_artifacts_sha256": {
     "macos/lib/libssh2.a": "b5f3362e65b769cf1df92ba856c1165745a7ca4d6b161f48a88b621fc745446a",
     "macos/lib/libcrypto.a": "fc13163d3dfce34f74ff06feb057a9eae546c729aa3ce4c1e87cc8121fdbde03",
     "macos/lib/libssl.a": "db8e9f2ce6f9aa1c1a5ae9a768048170784acc9e720f2c0b3e600896d5f3ac8d",

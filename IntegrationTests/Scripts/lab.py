@@ -175,21 +175,21 @@ class Lab:
     def control(self):
         checks = []
         for node in ('node-a', 'node-b'):
-            result = self.tsh('ssh', 'vvterm-test@' + node, "printf '%s\\n' '" + node + "'; printf '%s\\n' control-stderr >&2", check=False)
+            result = self.tsh('ssh', 'teleport-test@' + node, "printf '%s\\n' '" + node + "'; printf '%s\\n' control-stderr >&2", check=False)
             if result.returncode != 0 or result.stdout != (node + '\n').encode() or result.stderr != b'control-stderr\n':
                 log('Official-client control exit=' + str(result.returncode) + '; stderr=' + result.stderr.decode(errors='replace')[-2000:])
                 raise LabError('Official-client stdout/stderr/exit-status control failed on ' + node)
-            if self.tsh('ssh', 'vvterm-test@' + node, 'exit 23', check=False).returncode != 23:
+            if self.tsh('ssh', 'teleport-test@' + node, 'exit 23', check=False).returncode != 23:
                 raise LabError('Official-client remote exit-status control failed on ' + node)
             checks.extend((node + ':stdout-stderr', node + ':exit-status'))
-        pty = self.tsh('ssh', '--tty', 'vvterm-test@node-a',
+        pty = self.tsh('ssh', '--tty', 'teleport-test@node-a',
                        'test -t 0 && stty rows 37 cols 91 && stty size && '
                        'tmux -L teleport-e2e new-session -d -s e2e && tmux -L teleport-e2e kill-server')
         if pty.stdout != b'37 91\r\n' or pty.stderr:
             raise LabError('Official-client Unix PTY/tmux control failed.')
         checks.append('node-a:pty-tmux')
         denied_marker = '/tmp/teleport-denied-' + secrets.token_hex(6)
-        result = self.tsh('ssh', 'vvterm-test@node-denied', 'touch ' + denied_marker, check=False)
+        result = self.tsh('ssh', 'teleport-test@node-denied', 'touch ' + denied_marker, check=False)
         if result.returncode == 0 or not re.search(b'access denied|not authorized|permission denied', result.stderr, re.I):
             raise LabError('Denied-node control did not report server authorization denial.')
         self.compose('exec', '-T', 'node-denied', '/bin/test', '!', '-e', denied_marker)
@@ -204,7 +204,7 @@ class Lab:
         checks.append('nodes:no-direct-ssh')
         self.compose('stop', '--timeout', '10', 'node-a')
         try:
-            result = self.tsh('ssh', 'vvterm-test@node-a', 'printf should-not-run', timeout=30, check=False)
+            result = self.tsh('ssh', 'teleport-test@node-a', 'printf should-not-run', timeout=30, check=False)
             if result.returncode == 0 or result.stdout:
                 raise LabError('Node access survived reverse-tunnel loss.')
         except LabError as error:
@@ -315,7 +315,7 @@ def create(host, enroll):
         lab.wait(lambda: lab.ready('auth-proxy'), 'Auth/Proxy process readiness')
         lab.wait(lab.ping, 'Verified discovery')
         lab.auth('create', '/run/roles.yaml')
-        invitation = lab.auth('users', 'add', 'e2e-user', '--roles=e2e-client', '--logins=vvterm-test', '--ttl=15m').stdout.decode()
+        invitation = lab.auth('users', 'add', 'e2e-user', '--roles=e2e-client', '--logins=teleport-test', '--ttl=15m').stdout.decode()
         match = re.search(r'/web/invite/([A-Za-z0-9_-]+)', invitation)
         if not match:
             raise LabError('The pinned tctl invitation output is unsupported.')

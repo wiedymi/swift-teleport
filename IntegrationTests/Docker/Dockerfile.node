@@ -8,8 +8,8 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources && \
     apt-get update -qq && \
     apt-get install -y --no-install-recommends ca-certificates libpam0g libaudit1 libcap2 libsystemd0 libstdc++6 tmux netcat-openbsd iproute2 && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd --create-home --shell /bin/bash --uid 1000 vvterm-test && \
-    passwd --delete vvterm-test
+    useradd --create-home --shell /bin/bash --uid 1000 teleport-test && \
+    passwd --delete teleport-test
 COPY --from=teleport /usr/local/bin/teleport /usr/local/bin/teleport
 COPY --from=teleport /usr/bin/dumb-init /usr/bin/dumb-init
 RUN ldd /usr/local/bin/teleport && /usr/local/bin/teleport version

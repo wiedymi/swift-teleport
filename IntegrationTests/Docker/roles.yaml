@@ -8,6 +8,6 @@ spec:
     forward_agent: false
     port_forwarding: false
   allow:
-    logins: [vvterm-test]
+    logins: [teleport-test]
     node_labels:
       e2e-access: [allowed]

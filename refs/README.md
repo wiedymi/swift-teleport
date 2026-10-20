@@ -1,6 +1,6 @@
 # Optional source references
 
-There are **no Git submodules**. A normal SwiftPM clone or VVTerm build must not
+There are **no Git submodules**. A normal SwiftPM clone or consumer build must not
 download any reference repository. Only the small `pins.json` source map is
 tracked. Research folders under `refs/` are ignored and are never package inputs.
 

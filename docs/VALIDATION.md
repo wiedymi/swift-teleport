@@ -14,7 +14,7 @@ needs a new run; the saved results do not validate it.
 | macOS release package build | Passed |
 | iOS package build | Passed, default Xcode output path |
 | iOS Simulator package tests | 29 tests passed on iPhone Duo, iOS 27.1 |
-| Historical libssh2 engine matrix | 34 checks passed; exact OpenSSL 3.2.0 headers and VVTerm archives |
+| Historical libssh2 engine matrix | 34 checks passed; exact OpenSSL 3.2.0 headers and recorded static archives |
 | C adapter bounds and FD cleanup | 8 checks passed |
 | Historical engine platform builds | macOS arm64 13.3, iOS arm64 16.1, iOS Simulator arm64 16.1 |
 | Teleport server infrastructure | Local/TOTP enrollment, two allowed nodes, denied node, PTY/tmux, reverse-tunnel outage, no direct SSH route passed |

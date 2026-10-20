@@ -1,8 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-VVTERM_ROOT="${VVTERM_ROOT:-$REPO_ROOT/../../vivy-company/vvterm}"
 
 if [[ -z "${TELEPORT_LIBSSH2_ROOT:-}" ]] &&
    { [[ -z "${TELEPORT_LIBSSH2_INCLUDE:-}" ]] || [[ -z "${TELEPORT_LIBSSH2_LIBRARY:-}" ]]; }; then
@@ -12,7 +10,11 @@ if [[ -z "${TELEPORT_LIBSSH2_ROOT:-}" ]] &&
 fi
 SSH_INCLUDE="${TELEPORT_LIBSSH2_INCLUDE:-${TELEPORT_LIBSSH2_ROOT:-}/include}"
 SSH_LIBRARY="${TELEPORT_LIBSSH2_LIBRARY:-${TELEPORT_LIBSSH2_ROOT:-}/lib/libssh2.a}"
-CRYPTO_LIBRARY="${TELEPORT_LIBCRYPTO_LIBRARY:-$VVTERM_ROOT/Vendor/libssh2/macos/lib/libcrypto.a}"
+if [[ -z "${TELEPORT_LIBCRYPTO_LIBRARY:-}" ]]; then
+    echo "Set TELEPORT_LIBCRYPTO_LIBRARY to the matching static OpenSSL archive." >&2
+    exit 2
+fi
+CRYPTO_LIBRARY="$TELEPORT_LIBCRYPTO_LIBRARY"
 for artifact in "$SSH_INCLUDE/libssh2.h" "$SSH_INCLUDE/libssh2_sftp.h" \
                 "$SSH_LIBRARY" "$CRYPTO_LIBRARY"; do
     if [[ ! -f "$artifact" ]]; then

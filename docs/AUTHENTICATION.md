@@ -17,8 +17,7 @@ The client uses these versioned public routes:
 
 Public key bytes use JSON base64. The requested lifetime uses nanoseconds.
 The client uses one RSA 3072 private key for the issued SSH and TLS credentials.
-This reduces key storage and permits the same key to work with the existing
-VVTerm SSH engine. Other client key algorithms need separate checks.
+This reduces key storage and lets both authentication paths use one key. Other client key algorithms need separate checks.
 
 The client accepts TOTP only when the server offers it. A hardware key challenge
 returns a typed unsupported-policy error. Passwords and TOTP codes are not

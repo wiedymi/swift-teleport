@@ -9,8 +9,7 @@
 
 The SSH engine must negotiate a host certificate and verify the key exchange
 signature with its certified key. A fingerprint-only host callback is not enough.
-The existing VVTerm libssh2 1.11.1 build needs an upstream update when Teleport
-integration starts. Supply a compatible external engine as described in
+Supply a compatible external engine as described in
 [SSH-ENGINE.md](SSH-ENGINE.md). The standalone product does not bundle an engine.
 
 The connection retains the exact credentials that opened its mTLS path. A later
@@ -78,6 +77,6 @@ one cached ProxySSH HTTP/2 connection; each SSH session gets a separate stream.
 Control RPCs use short connections. This keeps the first implementation small;
 reuse for control RPCs can be measured before adding more connection state.
 
-Dependency ranges allow compatible versions to be shared with VVTerm.
+Dependency ranges allow compatible versions to be shared with the consuming app.
 `Package.resolved` records the exact graph used for package tests; the app keeps
 its own resolved graph. Reference repositories are never dependencies.

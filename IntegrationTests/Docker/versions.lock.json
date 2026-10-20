@@ -19,6 +19,6 @@
     }
   },
   "playwrightCore": "1.56.1",
-  "nodeDockerfileSHA256": "5f9be8b48e3990cc1e5ec816a5cfc9a381d7542b6a77cc5e43a80abc130a5296",
+  "nodeDockerfileSHA256": "36091c0de07118544f7c40ca9a82bbc3feb5a3705b612299f96c2c5e27bc0f0e",
   "chromium": "154.0.8037.92"
 }

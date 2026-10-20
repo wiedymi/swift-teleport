@@ -19,8 +19,7 @@ The host callback calls `TeleportConnection.verifyHostCertificate`. The package
 checks the CA, signature, dates, host principal, and critical options. A key
 fingerprint alone is not sufficient.
 
-VVTerm's existing libssh2 1.11.1 archive fails the host-certificate checks. Update
-VVTerm to a compatible upstream build when Teleport integration starts. The
+A libssh2 build must include the required host-certificate support. The
 checked upstream commit
 [`3209951`](https://github.com/libssh2/libssh2/commit/3209951db4e47ef902db047d12f9f464f835c27e)
 includes host certificates, failed-key-exchange cleanup, and exit-status presence
@@ -35,21 +34,22 @@ use a compatible OpenSSL build. With an `include/` and `lib/` directory:
 
 ```sh
 export TELEPORT_LIBSSH2_ROOT=/path/to/upstream-libssh2
+export TELEPORT_LIBCRYPTO_LIBRARY=/path/to/matching-openssl/lib/libcrypto.a
 IntegrationTests/SSH/run-engine-proof.sh
 swift build --package-path IntegrationTests/SSH --configuration release
 ```
 
 Alternatively, set `TELEPORT_LIBSSH2_INCLUDE` to the header directory and
 `TELEPORT_LIBSSH2_LIBRARY` to the static archive. Set both overrides together.
-Set `TELEPORT_LIBCRYPTO_LIBRARY` to the matching static OpenSSL archive, or set
-`VVTERM_ROOT` to use its archive. The default is the usual sibling VVTerm checkout.
+Set `TELEPORT_LIBCRYPTO_LIBRARY` to the matching static OpenSSL archive.
+No path is inferred from another project or a system installation.
 These are test inputs only; the root package has no libssh2 or OpenSSL dependency.
 
 The local proof needs macOS arm64, a C compiler, Python 3, and system `ssh-keygen`
 and `sshd`. It starts a loopback-only OpenSSH fixture and checks the supplied
 engine. It removes temporary keys, server files, and executables on exit. It
-does not change VVTerm or install a server service. The caller owns and removes
-the external engine build. Use `--report /path/to/report.json` to save the result.
+does not modify the external engine or install a server service. The caller owns
+and removes the external engine build. Use `--report /path/to/report.json` to save the result.
 The current proof has 24 engine checks and eight adapter bounds/descriptor checks.
 SwiftPM uses its default build cache.
 
@@ -77,9 +77,9 @@ the disposable fixture. The caller supplies an explicit output capacity.
 
 [The saved report](ssh-engine-results.json) records 34 local SSH checks and eight
 adapter bounds/descriptor checks. Those checks used a temporary libssh2 1.11.1
-build with local changes and the exact VVTerm OpenSSL 3.2.0 archives and headers.
-The stock VVTerm archive passed user-certificate tests with a pinned plain host
-key, but failed all five certificate-only host-key checks. The changed test
+build with local changes and the exact recorded OpenSSL 3.2.0 archives and headers.
+The baseline libssh2 1.11.1 archive passed user-certificate tests with a pinned
+plain host key, but failed all five certificate-only host-key checks. The changed test
 build passed all 15 host/user certificate pairs, full host-certificate retrieval,
 invalid certificate and signature rejection, expired user and denied login
 rejection, callback rejection, PTY resize, SFTP, and failed-key-exchange cleanup.
@@ -92,4 +92,4 @@ other CA types, FIPS, or physical-device behavior.
 
 The local changes and build scripts are now removed. The saved records remain
 historical results; rerun the checks with the selected upstream build before
-VVTerm integration. No SSH engine binary is distributed by this repository.
+app integration. No SSH engine binary is distributed by this repository.

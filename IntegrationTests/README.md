@@ -2,7 +2,7 @@
 
 This lab runs a fresh Teleport Community 18.11.4 cluster in Docker. The Swift client runs on the native Apple host. `tctl` is used only for setup. `tsh` runs only the separate infrastructure control checks.
 
-The lab uses one Auth/Proxy service and three Linux nodes. Nodes A and B allow the test user. The denied node has a different label. All nodes have the Unix account `vvterm-test`, Bash, core utilities, a writable home, and tmux. Each node connects through a reverse tunnel. No node port is published.
+The lab uses one Auth/Proxy service and three Linux nodes. Nodes A and B allow the test user. The denied node has a different label. All nodes have the Unix account `teleport-test`, Bash, core utilities, a writable home, and tmux. Each node connects through a reverse tunnel. No node port is published.
 
 ## Before use
 
@@ -36,7 +36,7 @@ The test wrapper always removes its lab:
 ./IntegrationTests/Scripts/test-e2e.sh --suite full -- /path/to/native-harness
 ```
 
-The native command receives `TELEPORT_E2E_FIXTURE` and `TELEPORT_E2E_SUITE`. It must fail if a required test cannot run. The wrapper fails when a native suite has no native command. The infrastructure suite is server-fixture coverage. It is not Swift or VVTerm coverage.
+The native command receives `TELEPORT_E2E_FIXTURE` and `TELEPORT_E2E_SUITE`. It must fail if a required test cannot run. The wrapper fails when a native suite has no native command. The infrastructure suite is server-fixture coverage. It is not native Swift client coverage.
 
 The proxy binds only `127.0.0.1`. The macOS and iOS Simulator clients use this same fixture and receive its public HTTPS CA through `TeleportProxy`. No system trust change is needed. Physical device tests need a separate reachable test environment and are outside this local run.
 
@@ -84,12 +84,11 @@ The 18.11.4 image was obtained from the registry and reports `Teleport v18.11.4 
 
 A run's small `report.json` contains only the server version, platform, and named infrastructure checks. The controller does not print raw enrollment errors, credentials, administrative output, or server logs. Keep any result summary you need before teardown. Server state and raw logs must not become build artifacts.
 
-The lab is one reusable server fixture. VVTerm should consume its manifest at the selected package revision. Do not make a second Compose stack in the app repository. See the [Linear E2E plan](https://linear.app/vivytech/document/teleport-docker-e2e-test-plan-2026-10-16-8434dd2ea251) for the separate native functional, fault, performance, and device release checks.
+The lab is one reusable server fixture. A consuming app can use its manifest at a selected package revision. Keep the server fixture here rather than duplicating the Compose stack. Native functional, fault, performance, and device checks belong to the consuming app; the server control suite does not replace them.
 
 The native SSH harness requires a compatible external upstream libssh2 build.
 See [the engine contract](../docs/SSH-ENGINE.md) for its inputs. This repository
-does not download or build that engine. The existing VVTerm engine needs an
-upstream update when Teleport integration starts.
+does not download or build that engine.
 
 ## Local validation
 
