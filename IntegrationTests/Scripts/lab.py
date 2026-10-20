@@ -105,6 +105,8 @@ class Lab:
                 log('Retrieving the pinned base image: ' + reference)
                 result = execute(['docker', 'pull', reference], env=self.env, timeout=300, check=False)
                 if result.returncode:
+                    # These are public pinned inputs; keep provisioning output private.
+                    log(result.stderr.decode(errors='replace')[-3000:])
                     raise LabError('The exact pinned base image is unavailable: ' + reference)
 
     def build(self, services, seconds):
