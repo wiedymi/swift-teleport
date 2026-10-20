@@ -14,6 +14,7 @@ public enum TeleportError: Error, Sendable, Equatable, CustomStringConvertible {
     case unsupportedVersion
     case httpStatus(Int)
     case authenticationRequired
+    case oneTimeCodeRequired
     case accessDenied
     case ambiguousNode
     case nodeNotFound
@@ -34,6 +35,7 @@ public enum TeleportError: Error, Sendable, Equatable, CustomStringConvertible {
         case .unsupportedVersion: "This Teleport server version is not supported."
         case .httpStatus(let status): "Teleport returned HTTP \(status)."
         case .authenticationRequired: "Teleport login is required."
+        case .oneTimeCodeRequired: "A fresh one-time code is required."
         case .accessDenied: "Teleport access was denied."
         case .ambiguousNode: "More than one Teleport node has this name."
         case .nodeNotFound: "The Teleport node was not found."

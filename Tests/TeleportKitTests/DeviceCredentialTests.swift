@@ -121,6 +121,42 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
     }
 
     #if os(macOS)
+    func testTOTPSetupRequestsCodeBeforeCreatingOrStoringAKey() async throws {
+        let issuer = try BrowserMFACertificateIssuer()
+        defer { issuer.remove() }
+        let proxy = try Self.proxy(), keys = DeviceTestKeys(), store = DeviceTestStore()
+        let identity = try await Self.identity(issuer: issuer, proxy: proxy)
+        let server = try await DeviceTestServer(issuer: issuer, keys: keys)
+        do {
+            try await Self.register(proxy: proxy, identity: identity, store: store, keys: keys, server: server, otp: "")
+            XCTFail("TOTP setup accepted an empty code")
+        } catch let error as TeleportError { XCTAssertEqual(error, .oneTimeCodeRequired) }
+        let created = await keys.createCount, signed = await keys.signCount
+        let saved = await store.load(username: "alice"), writes = await store.writeCount
+        let snapshot = await server.snapshot()
+        XCTAssertEqual(created, 0)
+        XCTAssertEqual(signed, 0)
+        XCTAssertNil(saved)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(snapshot.registrations, 0)
+    }
+
+    func testSetupWithoutRequiredApprovalAcceptsAnEmptyCode() async throws {
+        let issuer = try BrowserMFACertificateIssuer()
+        defer { issuer.remove() }
+        let proxy = try Self.proxy(), keys = DeviceTestKeys(), store = DeviceTestStore()
+        let identity = try await Self.identity(issuer: issuer, proxy: proxy)
+        let server = try await DeviceTestServer(issuer: issuer, keys: keys, approval: .none)
+        try await Self.register(proxy: proxy, identity: identity, store: store, keys: keys, server: server, otp: "")
+        let created = await keys.createCount
+        let saved = await store.load(username: "alice"), writes = await store.writeCount
+        let snapshot = await server.snapshot()
+        XCTAssertEqual(created, 1)
+        XCTAssertNotNil(saved)
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(snapshot.registrations, 1)
+    }
+
     func testRegistrationThenLoginStoresOnlyACompleteBoundIdentity() async throws {
         let issuer = try BrowserMFACertificateIssuer()
         defer { issuer.remove() }
@@ -318,8 +354,8 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
         return try response.identity(proxy: proxy, username: "alice", cluster: "cluster", key: key, userTrust: trust, ttl: 3600)
     }
     private static func register(proxy: TeleportProxy, identity: TeleportIdentity, store: DeviceTestStore,
-                                 keys: DeviceTestKeys, server: DeviceTestServer) async throws {
-        try await DeviceCredentialAuthentication.register(proxy: proxy, identity: identity, name: "Test device", otp: "123456",
+                                 keys: DeviceTestKeys, server: DeviceTestServer, otp: String = "123456") async throws {
+        try await DeviceCredentialAuthentication.register(proxy: proxy, identity: identity, name: "Test device", otp: otp,
                                                           presenter: nil, prompt: "Register test device", store: store, keys: keys,
                                                           request: { try await server.request(path: $0, query: $1, body: $2) },
                                                           rpc: { try await server.rpc(path: $0, body: $1) })
@@ -356,10 +392,12 @@ private actor DeviceTestKeys: DeviceKeyOperations {
     private let key = P256.Signing.PrivateKey()
     private let mode: Mode
     private var signWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var createCount = 0
     private(set) var signCount = 0
     init(mode: Mode = .ready) { self.mode = mode }
     func material() -> DeviceKeyMaterial { .init(protectedKey: key.rawRepresentation, publicKeyX963: key.publicKey.x963Representation) }
     func create(prompt: String) throws -> DeviceKeyMaterial {
+        createCount += 1
         if mode == .unavailable { throw TeleportError.secureEnclaveUnavailable }
         return material()
     }
@@ -411,7 +449,7 @@ private actor DeviceTestIdentityStore: TeleportIdentityStore {
 private actor DeviceTestServer {
     enum CreationFault: Equatable, Sendable { case none, rp, account, algorithm, attestation, resident, attachment }
     enum AckFault: Equatable, Sendable { case none, id, rp, key, deviceType }
-    enum Approval: Equatable, Sendable { case totp, browser }
+    enum Approval: Equatable, Sendable { case none, totp, browser }
     struct Snapshot: Sendable {
         let registrations: Int
         let finishes: Int
@@ -480,17 +518,23 @@ private actor DeviceTestServer {
             let request = try Teleportkit_Deviceauth_CreateAuthenticateChallengeRequest(serializedBytes: body)
             guard request.hasContextUser, request.challengeExtensions.scope == 4, request.challengeExtensions.allowReuse == 2 else { throw DeviceTestFailure.request }
             var response = Teleportkit_Deviceauth_MFAAuthenticateChallenge()
-            if approval == .browser {
+            switch approval {
+            case .browser:
                 guard let callbackURL = URL(string: request.browserMfaTshRedirectURL), callbackURL.scheme == "http",
                       callbackURL.host == "127.0.0.1", callbackURL.path == "/callback" else { throw DeviceTestFailure.request }
                 self.callbackURL = callbackURL
                 response.browserMfaChallenge.requestID = Self.browserRequestID
-            } else { response.totp = Teleportkit_Deviceauth_TOTPChallenge() }
+            case .totp:
+                response.totp = Teleportkit_Deviceauth_TOTPChallenge()
+            case .none:
+                response.mfaRequired = 2 // NO
+            }
             return try response.serializedData()
         case DeviceAuthRPC.registrationPath:
             let request = try Teleportkit_Deviceauth_CreateRegisterChallengeRequest(serializedBytes: body)
             guard request.deviceType == 3, request.deviceUsage == 1 else { throw DeviceTestFailure.request }
-            if approval == .browser {
+            switch approval {
+            case .browser:
                 guard case .browser(let response)? = request.existingMfaResponse.response,
                       response.requestID == Self.browserRequestID, response.webauthnResponse.type == "public-key",
                       response.webauthnResponse.rawID == Data([1, 2, 3]),
@@ -498,8 +542,10 @@ private actor DeviceTestServer {
                       response.webauthnResponse.response.authenticatorData == Data([1, 2, 3]),
                       response.webauthnResponse.response.signature == Data([4, 5, 6]) else { throw DeviceTestFailure.request }
                 browserApprovalMapped = true
-            } else {
+            case .totp:
                 guard request.existingMfaResponse.totp.code == "123456" else { throw DeviceTestFailure.request }
+            case .none:
+                guard !request.hasExistingMfaResponse else { throw DeviceTestFailure.request }
             }
             return try Self.creation()
         case DeviceAuthRPC.addPath:

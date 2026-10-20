@@ -30,7 +30,7 @@ enum DeviceCredentialAuthentication {
             registrationRequest = try DeviceAuthRPC.registrationRequest()
         case .totp:
             guard presenter == nil else { throw TeleportError.unsupportedPolicy(.browserMFA) }
-            guard !otp.isEmpty else { throw TeleportError.invalidConfiguration("a fresh TOTP code is required for setup") }
+            guard !otp.isEmpty else { throw TeleportError.oneTimeCodeRequired }
             registrationRequest = try DeviceAuthRPC.registrationRequest(otp: otp)
         case .browser(let id):
             guard let callback, let presenter else {

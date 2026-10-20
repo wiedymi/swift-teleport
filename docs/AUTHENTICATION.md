@@ -78,6 +78,10 @@ high-level operations:
 - `registerSecureEnclaveCredential(name:otp:browser:prompt:)` requires a usable,
   verified identity and fresh TOTP or browser approval when required by the server.
   Supply a code or presenter, not both. Device names have a 30 UTF-8 byte limit.
+  If setup returns `oneTimeCodeRequired`, ask for a fresh authenticator code and
+  retry. After a TOTP login, wait for the next code; Teleport rejects code reuse.
+  If the server requires no approval, setup accepts an empty code. Browser
+  approval is a separate option that needs an existing passkey or security key.
 - `loginWithSecureEnclave(username:password:prompt:ttl:)` uses the local account
   password and a biometric WebAuthn assertion, then returns a complete identity.
 - `deleteSecureEnclaveCredential(username:)` deletes only the local credential.
