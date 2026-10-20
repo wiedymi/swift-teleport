@@ -1,0 +1,14 @@
+Date: 2026-10-20
+Host: Apple M5 Max, macOS 27.2
+Client: arm64 iPhone Duo Simulator, iOS 27.1
+Server: Teleport Community 18.11.4, OrbStack 2.2.4
+
+PASS HTTPS discovery
+PASS TOTP login, shared identity, and certificate validation
+PASS rejected wrong HTTPS CA
+PASS mTLS node lookup and role filtering
+PASS ProxySSH, host CA, user certificate, stdout, stderr, and exit status
+PASS PTY and resize
+PASS SFTP upload, download, and file cleanup
+PASS local sign-out
+PASS all native checks

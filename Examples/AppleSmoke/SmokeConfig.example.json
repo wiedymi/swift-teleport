@@ -1,0 +1,12 @@
+{
+  "proxyURL": "https://teleport.localhost:18443",
+  "clusterName": "replace-with-test-cluster",
+  "serverVersion": "18.11.4",
+  "httpsCA": "BASE64_DER_CERTIFICATE",
+  "credentials": {
+    "username": "replace-with-disposable-test-user",
+    "password": "replace-with-disposable-test-password",
+    "totpSeed": "REPLACE_WITH_DISPOSABLE_TEST_SEED"
+  },
+  "nodes": []
+}
