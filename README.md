@@ -4,10 +4,9 @@ A native Swift package for SSH access through a Teleport proxy. It handles sign-
 short-lived SSH/TLS certificates, node lookup, and proxy streams. Your SSH engine
 handles commands, terminals, PTY, and SFTP.
 
-Requires Swift 6.2 or later with the checked-in dependency lock, and
-iOS/iPadOS 16.1 or later or macOS 13.3 or later. The only public product is
-`TeleportKit`. It includes no Go runtime, `tsh`, server binary, UI framework, or
-SSH engine.
+The locked dependencies require Swift 6.2+. Runs on iOS/iPadOS 16.1+ and macOS
+13.3+. The only public product is `TeleportKit`. It includes no Go runtime, `tsh`,
+server binary, or UI framework.
 
 ## Add the package
 
@@ -17,17 +16,16 @@ Use an exact source revision in your app's `Package.swift`:
 // In Package.dependencies:
 .package(
     url: "https://github.com/wiedymi/swift-teleport.git",
-    revision: "670d819ce7013af4e993ca55c3a12a93d1f34b13"
+    revision: "aad06a2128df1ae03aeb26e59d34cae7223c196a"
 )
 
 // In your app target's dependencies:
 .product(name: "TeleportKit", package: "swift-teleport")
 ```
 
-In Xcode, add the same URL and select **Commit** with that revision. This revision
-includes the authentication APIs below. The app keeps its own dependency lock.
-Reference repositories are optional research inputs. They are not submodules or
-package dependencies and are not fetched when the package resolves.
+In Xcode, add the same URL and select **Commit** with that revision. The app keeps
+its own dependency lock. Optional reference repositories are not submodules or
+package dependencies; package resolution does not fetch them.
 
 ## Create one client per profile
 
@@ -40,9 +38,9 @@ let client = TeleportClient(proxy: proxy)
 let discovery = try await client.discover()
 ```
 
-Share this client across tabs and nodes for the same proxy/account profile.
+Share this client across tabs and nodes for one proxy/account profile.
 `discovery` reports the root cluster, server version, authentication type, and
-advertised connectors. HTTPS verification stays active.
+connectors. HTTPS verification stays active.
 
 System HTTPS trust is the default. For a private HTTPS CA, supply its DER bytes:
 
@@ -53,8 +51,8 @@ let proxy = try TeleportProxy(
 )
 ```
 
-This does not disable certificate checks or change system browser trust. iOS ATS
-and browser trust can need app or device settings; see
+This keeps certificate checks active. Browser trust and iOS ATS need separate
+app or device settings; see
 [HTTPS requirements](docs/INTEGRATION.md#profile-and-storage).
 
 The default identity store is memory only. For durable storage, supply your
@@ -64,15 +62,15 @@ app's `TeleportIdentityStore`:
 let client = TeleportClient(proxy: proxy, identityStore: secureStore)
 ```
 
-`secureStore` is an app-supplied store. Its `replace(with:)` must replace the
-complete identity in one atomic write and preserve the old record if the write
-fails. Store private keys in secure, device-only storage. Keep them out of logs
-and cloud configuration sync. See the [storage contract](docs/INTEGRATION.md#profile-and-storage).
+Its `replace(with:)` must atomically replace the complete identity and preserve
+the old record if the write fails. Keep private keys in secure, device-only
+storage, outside logs and cloud sync. See the
+[storage contract](docs/INTEGRATION.md#profile-and-storage).
 
 The examples below use account input from your app: `username`, `password`,
 `oneTimeCode`, and a browser `presenter`. Do not put credentials in source code.
-Each login returns a complete, validated `TeleportIdentity` and stores it through
-the configured identity store.
+Each login returns a validated `TeleportIdentity` and writes it to the configured
+store.
 
 ## Password and TOTP
 
@@ -104,10 +102,10 @@ let identity = try await client.login(
 )
 ```
 
-This still requires the local account password. It does not register a credential.
-`discovery.webAuthnConfigured` can show this action, but the server's login
-challenge decides whether browser MFA is allowed. Handle
-`TeleportError.unsupportedPolicy(.browserMFA)` when it is disabled.
+This needs the account password and an existing credential.
+`discovery.webAuthnConfigured` is a UI hint. The login challenge decides whether
+browser MFA is allowed; otherwise, the call throws
+`TeleportError.unsupportedPolicy(.browserMFA)`.
 
 ## Browser SSO
 
@@ -120,11 +118,10 @@ if let connector = discovery.connectors.first(where: { $0.kind == .github }) {
 }
 ```
 
-OIDC and SAML use the same high-level call when the server advertises a supported
-connector. SSO and local browser MFA use different Teleport protocols. SSO returns
-certificates in its callback; local MFA returns an assertion for a later
+OIDC and SAML use the same call with their advertised connector. SSO returns
+certificates in its callback; local browser MFA returns an assertion for a later
 certificate request. Required login banners and SAML HTTP-POST binding are
-unsupported. Real provider validation remains pending.
+unsupported. Real provider tests remain pending.
 
 ### Supply the browser presenter
 
@@ -142,16 +139,12 @@ struct AppBrowserPresenter: TeleportBrowserPresenter {
 }
 ```
 
-Your `openURL` action presents the system authentication browser and returns after
-it opens. Keep one app-owned browser/login operation per profile. Retain its browser
-until the shared login completes or its last owner leaves. Matching login callers
-share one task; a canceled individual waiter must not close a browser still used
-by another waiter. Cancel the operation when its last owner leaves or the user
-cancels the browser, then close the browser.
-
-The final callback uses an authenticated, encrypted IPv4 loopback listener. It is
-not a custom app URL scheme. A sandboxed Mac app needs incoming network permission.
-See [browser presentation and app settings](docs/INTEGRATION.md#browser-presentation).
+`openURL` must present the system authentication browser and return after it
+opens. Keep that browser alive until login completes or all callers cancel.
+Matching callers share one login. Canceling one caller must not close another
+caller's browser. The callback uses encrypted IPv4 loopback HTTP; a sandboxed Mac
+app needs incoming network permission. See
+[browser ownership and app settings](docs/INTEGRATION.md#browser-presentation).
 
 ## Optional Secure Enclave MFA
 
@@ -195,9 +188,8 @@ try await client.registerSecureEnclaveCredential(
 )
 ```
 
-These are alternative setup calls. Supply a code or a presenter, not both. The
-server decides which approval is required. Setup uses the current verified
-identity and a new device-management MFA request.
+Supply a code or a presenter, not both. Setup uses the current verified identity
+and a fresh device-management approval chosen by the server.
 
 Later, sign in with the registered credential:
 
@@ -215,17 +207,16 @@ Remove only the local credential:
 try await client.deleteSecureEnclaveCredential(username: username)
 ```
 
-Local deletion does not remove Teleport's device entry, sign out, or revoke issued
-access. Remove the server entry through Teleport separately. Keep another login
-method for recovery. A changed biometric set or device replacement can make the
-key unusable. Failed setup can leave a server entry without a local credential.
+Local deletion keeps the server entry and issued identity. Remove the server entry
+through Teleport separately. Keep another login method for recovery: device or
+biometric changes can make the key unusable, and failed setup can leave an unused
+server entry.
 
-The app supplies setup/recovery screens, localized prompts,
-`NSFaceIDUsageDescription`, signing settings, and the Keychain namespace. No
-Associated Domains capability is needed. There is no software-key fallback.
-The RP must equal the proxy host. The response does not prove Secure Enclave
-storage to Teleport, and it uses a zero signature counter. Hardware SSH-key and
-Device Trust policies remain unsupported. See
+The app supplies screens, prompts, `NSFaceIDUsageDescription`, signing settings,
+and the Keychain namespace. No Associated Domains capability is needed. The RP
+must equal the proxy host. There is no software-key fallback or hardware
+attestation proof to Teleport. The signature counter is zero. Hardware SSH-key
+and Device Trust policies remain unsupported. See
 [setup, signing, and recovery](docs/INTEGRATION.md#optional-biometric-device-credential)
 and [authentication choices](docs/AUTHENTICATION.md#optional-secure-enclave-mfa).
 
@@ -248,9 +239,8 @@ let connection = try await client.connect(to: node, login: "alice")
 let socket = try connection.takeSocketDescriptor()
 ```
 
-The Teleport account and OS login are separate. This package supports the root
-cluster only. Duplicate display names return `TeleportError.ambiguousNode`; prefer
-the stable ID.
+The Teleport account and OS login are separate. Only the root cluster is supported.
+Duplicate display names return `TeleportError.ambiguousNode`; prefer the stable ID.
 
 Pass these three inputs to your compatible SSH engine:
 
@@ -263,9 +253,9 @@ Pass these three inputs to your compatible SSH engine:
 try connection.verifyHostCertificate(hostCertificateBytes)
 ```
 
-`hostCertificateBytes` is the complete SSH wire-format host certificate from key
-exchange. The engine must also verify the key-exchange signature with its certified
-key. A fingerprint-only check is insufficient.
+`hostCertificateBytes` is the complete SSH wire-format host certificate. The
+engine must also verify the key-exchange signature with its certified key.
+A fingerprint-only check is insufficient.
 
 Keep `connection` alive until SSH work stops. The engine owns the transferred
 socket and must close it after its final SSH call. Then close the package path:
@@ -278,7 +268,6 @@ On cancellation, closing the connection wakes pending socket work. Wait for the
 engine to stop before closing its descriptor. Read the
 [socket ownership contract](docs/INTEGRATION.md#socket-ownership) and
 [SSH engine requirements](docs/SSH-ENGINE.md) before wiring commands, PTY, or SFTP.
-The library does not bundle an SSH engine or expose those channel operations.
 
 ## Sign out and handle failures
 
@@ -286,9 +275,9 @@ The library does not bundle an SSH engine or expose those channel operations.
 try await client.signOut()
 ```
 
-The app must close its dependent SSH sessions. Sign-out cancels pending
-authentication and clears the issued identity. It keeps the registered device
-credential and does not revoke server certificates.
+Close dependent SSH sessions in the app. Sign-out cancels pending authentication
+and clears the issued identity. It keeps the device credential and does not revoke
+server certificates.
 
 Handle `CancellationError` separately from failure. Use fixed, localized messages
 for `TeleportError` cases such as `authenticationRequired`, `accessDenied`,
@@ -315,15 +304,14 @@ swift test
 swift build -c release
 ```
 
-The pinned Teleport 18.11.4 lab passed native registration/login with an injected
-software test key, including real password/TOTP login and issued SSH/TLS
-certificates. This does not prove Secure Enclave, biometric prompts, or signed
-Keychain access. Real browser MFA, physical keys, provider SSO, and device lifecycle
-checks remain pending. See the exact [validation record](docs/VALIDATION.md).
+The pinned Teleport 18.11.4 lab passed registration/login with an injected software
+test key, real password/TOTP, and issued SSH/TLS certificates. Secure Enclave,
+biometric prompts, signed Keychain access, real browser MFA, physical keys,
+provider SSO, and device lifecycle checks remain unverified. See the
+[validation record](docs/VALIDATION.md).
 
 The lab wrapper removes its containers, networks, credentials, and run files on
-exit. A lab started with `lab.sh up` needs an explicit `lab.sh down`. SSH tests need
-a caller-supplied compatible upstream libssh2 build and matching crypto libraries.
-The repository does not download or build an SSH engine.
+exit. After `lab.sh up`, run `lab.sh down`. SSH tests need a caller-supplied
+compatible upstream libssh2 build and matching crypto libraries.
 
 This project is independent and is not affiliated with Teleport or its publisher.

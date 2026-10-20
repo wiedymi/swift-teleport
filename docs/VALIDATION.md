@@ -1,209 +1,138 @@
 # Validation
 
-Date: 20 October 2026. These are local checks.
+Date: 20 October 2026. Results below distinguish local tests, real server traffic,
+Apple CI, and hardware checks. A build or mock test does not prove device support.
+
+## Readability review
+
+- `swift test`: 71 passed; both live-server tests skipped without a fixture.
+- `swift build -c release`: passed.
+- iOS Release package build: passed with default Derived Data and code signing disabled.
+- Registration now maps protobuf directly to typed options. Existing tests still
+  cover policy, account/RP/key binding, callbacks, storage, and cancellation.
+- A new unary test checks rejection of two replies in one frame or separate frames.
+  It passed before and after removing the temporary message array.
+- Guide links, heading anchors, code blocks, wording, diff checks, and absent
+  optional references passed.
+
+This review changes no public API. Real-server and hardware checks were not
+repeated; the earlier results below retain their stated limits.
 
 ## Secure Enclave MFA change
 
-The pinned source protocol was checked before implementation. Registration uses
-Auth mTLS and fresh `MANAGE_DEVICES` approval; login uses the versioned public
-WebAuthn endpoints. The test image is still the exact pinned Teleport 18.11.4
-arm64 digest. No new production dependency was added.
+The protocol was checked before implementation against the pinned source. Setup
+uses Auth mTLS with fresh `MANAGE_DEVICES` approval. Login uses the public WebAuthn
+endpoints. The lab uses the exact Teleport Community 18.11.4 arm64 image digest.
+No production dependency was added.
 
-The auth-only lab completed a real native test using an injected software P-256
-key. It covered password/TOTP login, native WebAuthn registration, biometric-key
-login protocol, separate issued SSH/TLS keys and complete identity validation,
-wrong-password HTTP 403, local deletion, missing-credential failure, and preservation
-of the existing identity after failures. Verified HTTPS and Auth mTLS stayed active.
-This test used the public high-level operations with internal test-only key/storage
-adapters. Production has no software-key fallback.
+| Check | Result |
+| --- | --- |
+| Full package run with a fresh auth-only fixture | 70 passed; one browser live test skipped |
+| Native server registration/login test | Passed in 53.174 seconds |
+| Operation tests after moving identity loading inside exclusive setup | All three passed |
+| macOS release and iOS package builds | Passed in default build locations |
+| Python lab checks | Five passed; shell syntax and diff checks also passed |
+| Apple CI at `670d819` | [Passed](https://github.com/wiedymi/swift-teleport/actions/runs/39442239346) |
 
-The new unit checks cover scoped storage and safe errors; cryptographic assertions;
-account, RP, and cluster binding; credential/public-key acknowledgment; attestation,
-resident-key and algorithm rejection; failed/canceled setup; missing keys; storage
-failure; pending-operation exclusion; and sign-out/caller cancellation. A real
-loopback unit test verifies browser management scope and callback-to-protobuf
-mapping. Existing password/TOTP and browser callback checks remain in the suite.
+The real-server test used an injected software P-256 key and memory storage.
+It covered password/TOTP login, WebAuthn registration/login, a fresh RSA key for
+SSH/TLS certificates, complete identity validation, wrong-password HTTP 403,
+local deletion, missing-credential failure, and identity preservation after
+failures. HTTPS verification and Auth mTLS stayed active. Production has no
+software-key fallback. This auth-only fixture has no SSH nodes or transport control.
 
-Checks for this change:
+Unit tests cover signatures; account/RP/cluster/key binding; server acknowledgment;
+unsupported policies; cancellation; storage failures; operation exclusion; and
+sign-out. A loopback test checks fresh browser management scope and callback
+mapping. Existing password/TOTP and SSO callback checks remain in the suite.
 
-- `swift test` with a fresh auth-only fixture: 70 passed, one browser live test
-  skipped. The native real-server check passed in 53.174 seconds.
-- After moving identity loading inside the exclusive setup operation,
-  `swift test --filter DeviceCredentialOperationTests`: all three passed.
-- `swift build -c release`: passed.
-- `xcodebuild -scheme swift-teleport -destination 'generic/platform=iOS'
-  -configuration Release CODE_SIGNING_ALLOWED=NO build`: passed in default Derived Data.
-- Five Python lab checks, shell syntax, and diff checks passed.
+Still unverified:
 
-The Linux infrastructure-control CI run at `ade6ae3` failed while pulling its
-image: the registry returned `toomanyrequests: Data limit exceeded`. It did not
-start a server. This is separate from the local native result and the earlier
-Linux config-ownership failure below.
+- Secure Enclave key use and signed Data Protection Keychain access.
+- Face ID/Touch ID prompts, cancellation, lockout, restart persistence,
+  biometric-set changes, and physical-device recovery.
+- Real browser management approval and real provider SSO.
 
-Unverified: real Secure Enclave key creation/use, signed Data Protection Keychain
-access, Face ID/Touch ID prompt enforcement and cancellation, lockout, restart
-persistence, biometric enrollment changes, physical-device recovery, and real
-browser management approval. A software key and simulator cannot establish those
-properties. The auth-only lab has no SSH nodes or transport control and does not
-replace the earlier SSH/terminal tests. Real provider SSO is still unverified.
+Linux infrastructure CI is separate. At `670d819`, the UID 0 server could not read
+the private config owned by runner UID 1001. At `ade6ae3`, an image pull failed with
+`toomanyrequests: Data limit exceeded`. Neither run reached readiness. Permissions
+were not loosened. The local auth-only fixture uses the host UID and passed.
 
-Material choices are recorded in [AUTHENTICATION.md](AUTHENTICATION.md): password
-plus non-resident biometric MFA; exact proxy-host RP matching; no attestation proof
-to Teleport; zero counters; biometric-set invalidation; one opaque-key record; and
-the server/local storage transaction gap. App settings and recovery steps are in
-[INTEGRATION.md](INTEGRATION.md).
+See [authentication choices](AUTHENTICATION.md#optional-secure-enclave-mfa) and
+[app settings and recovery](INTEGRATION.md#optional-biometric-device-credential).
 
 ## Earlier local browser MFA change
 
-The new path was checked against the pinned source protocol before code changes.
-Local browser MFA returns a WebAuthn assertion and then requests certificates;
-GitHub/OIDC/SAML SSO returns certificates in its callback. Only their authenticated
-loopback transport is shared.
+At `dd0ee2c`, 45 package tests passed and one live browser test was skipped.
+Release and iOS builds passed, as did Apple CI. The twelve new tests covered
+challenge/assertion checks, callback authentication, cancellation, timeout, input
+bounds, shared login, failed storage, and certificate/account/root/key binding.
+Three mock certificate tests used the existing OpenSSL 3 installation; they skip
+when it is absent. Lab syntax and absent-reference checks also passed.
 
-Checks at that change:
+The real browser test did not reach Auth startup or enrollment. After the pinned
+server image became available, the pinned Chromium fixture download exceeded its
+15-minute build limit. No version, TLS check, or system trust setting was changed.
 
-- `swift test`: 45 passed, one live test skipped. All 33 prior tests passed,
-  including password/TOTP request fields, SSO callback authentication and tamper
-  rejection, certificate validation, and transport checks.
-- Twelve new focused tests cover discovery hints, missing/invalid challenges,
-  invalid assertions, invalid callbacks followed by a valid callback, cancellation,
-  timeout, input bounds, separate pending authentication methods, shared waiter
-  cancellation, base64 format boundaries, failed storage, and account/root/SSH/TLS key binding.
-- Three of those tests use a mock certificate endpoint that signs the actual new
-  native public keys. They ran on macOS using an existing OpenSSL 3 installation.
-  They skip if that test tool is absent; no new dependency is installed.
-- `swift build -c release`: passed.
-- `xcodebuild -scheme swift-teleport -destination 'generic/platform=iOS'
-  -configuration Release CODE_SIGNING_ALLOWED=NO build`: passed in default Derived Data.
-- Five Python lab checks, three JavaScript syntax checks, shell syntax, optional
-  reference checks, and diff checks passed.
-
-The real-server attempt used the exact pinned Teleport 18.11.4 image. Its first
-pull command showed no layer progress for five minutes and was stopped. The
-Docker service later completed the download. A second attempt reached the pinned
-Chromium fixture build, but its 233 MB package download could not finish within
-the existing 15-minute build limit. No version was substituted, no TLS check was
-disabled, and no system trust setting was changed. Auth startup and user enrollment
-did not run. The new browser MFA test and its password/TOTP regression step have
-not run against the server. Historical password/TOTP results below are separate.
-
-Apple CI passed for the consumer-pinned commit `dd0ee2c`. Linux fixture CI at
-that commit downloaded and built the images but failed before server readiness:
-the process ran as UID 0 without capabilities and could not read the private
-config owned by runner UID 1001. The safe diagnostics confirmed the file and
-permission failure. This lab ownership issue remains open; modes were not loosened.
-
-The optional live test provisions a virtual WebAuthn key through test tools, then
-calls the public library API. Its private file relay carries the encrypted callback
-from container Chromium to the native loopback listener. It does not prove visual
-forms, system browser presentation, physical keys/passkeys, Apple device lifecycle,
-or sandboxed Mac callbacks. Real GitHub/OIDC/SAML provider validation is still
-missing. See [the lab commands](../IntegrationTests/README.md).
-
-Material choices: keep separate local MFA and SSO response types; reuse the
-existing callback cryptography and certificate checks; let Teleport verify
-WebAuthn signatures and request/account scope; create keys after approval; expose
-the configured RP only as a UI hint; reject browser MFA when the server does not
-offer it. That change added no production dependency or registration API. Assertion
-resource limits are listed in [AUTHENTICATION.md](AUTHENTICATION.md).
+The optional test uses a virtual WebAuthn key and a private file relay for the
+encrypted callback. Even a pass would not prove system browser UI, physical keys,
+Apple app lifecycle, or sandboxed Mac presentation. Local browser MFA returns an
+assertion for certificate issuance; SSO returns certificates in its callback.
+Only the authenticated callback transport is shared.
 
 ## Earlier checks
 
-The records below distinguish package tests, SSH engine tests, server controls,
-and native app tests. A server control result is not a Swift client result.
-SSH results below used a temporary libssh2 1.11.1 build with local changes.
-Those changes and build scripts are removed. A caller-supplied upstream engine
-needs a new run; the saved results do not validate it.
+These results predate the biometric feature. SSH results used temporary changes
+to libssh2 1.11.1. Those changes and build tools are removed. They do not validate
+a caller-supplied upstream engine.
 
-| Check | Observed result |
+| Check | Recorded result |
 | --- | --- |
-| macOS package unit/fault tests | 33 tests passed (9 auth, 14 transport/trust/FD, 10 certificate/configuration/parser) |
-| macOS release package build | Passed |
-| iOS package build | Passed, default Xcode output path |
-| iOS Simulator package tests | 29 tests passed on iPhone Duo, iOS 27.1 |
-| Historical libssh2 engine matrix | 34 checks passed; exact OpenSSL 3.2.0 headers and recorded static archives |
-| C adapter bounds and FD cleanup | 8 checks passed |
-| Historical engine platform builds | macOS arm64 13.3, iOS arm64 16.1, iOS Simulator arm64 16.1 |
-| Teleport server infrastructure | Local/TOTP enrollment, two allowed nodes, denied node, PTY/tmux, reverse-tunnel outage, no direct SSH route passed |
-| Native public password/TOTP login | Passed against Teleport 18.11.4; both issued certificate chains and identity record checked |
-| Native node/SSH path | Full fresh-login public-API run passed on OrbStack; both nodes, PTY resize, 256 KiB SFTP, concurrent streams, denials, and sign-out |
-| Native benchmark | Release cold/warm 1/10/25 prepared leases and verified 1 MiB SFTP round trip passed |
-| AppleSmoke simulator | Full live run passed; includes wrong HTTPS CA rejection |
-| Browser provider sign-in | Pending a permitted provider fixture |
+| macOS package tests | 33 passed: 9 auth, 14 transport/trust/FD, 10 certificate/parser |
+| iOS Simulator package tests | 29 passed on iPhone Duo, iOS 27.1 |
+| Package builds | macOS release and iOS passed |
+| Historical SSH engine matrix | 34 checks passed; pinned OpenSSL 3.2.0 headers and static archives |
+| C adapter bounds and descriptor cleanup | Eight checks passed |
+| Engine archive builds | macOS arm64 13.3, iOS arm64 16.1, Simulator arm64 16.1 |
+| Official-client server controls | TOTP enrollment, allowed/denied nodes, PTY/tmux, reverse-tunnel outage, no direct SSH route passed |
+| Native public login | Password/TOTP, SSH/TLS chains, and identity checks passed on Teleport 18.11.4 |
+| Native node/SSH path on OrbStack | Fresh login, both nodes, PTY resize, 256 KiB SFTP, concurrent streams, denials, and sign-out passed |
+| Release benchmark | Cold/warm 1/10/25 prepared leases and verified 1 MiB SFTP round trip passed |
+| Simulator smoke app | Live run and wrong-HTTPS-CA rejection passed |
+| Provider sign-in | Unverified |
 
-The first native login and server controls ran in a temporary Colima runtime.
-That VM, its containers, and its credentials were removed when the user selected
-OrbStack. OrbStack is installed under the user's approved setup; new live checks
-use it. No old fixture is treated as a result for the new runtime.
-The final server controls also passed on OrbStack.
+Records: [native E2E](native-e2e-results.txt), [Apple smoke](apple-smoke-results.txt),
+[SSH matrix](ssh-engine-results.json), and [benchmark samples](benchmark-results.json).
+The [benchmark notes](../Benchmarks/README.md) list measurement limits. Interactive
+latency, CPU/allocation profiles, idle wakeups, impaired networks, and reference
+comparisons remain unmeasured. No performance budget is claimed.
 
-The redacted records are [native-e2e-results.txt](native-e2e-results.txt) and
-[apple-smoke-results.txt](apple-smoke-results.txt). The native run uses the same
-public package API as a consuming app. The simulator app includes one ATS domain
-setting for its private test HTTPS CA; certificate validation stays active and
-the wrong-CA check fails as required.
+Transport tests cover TLS route order and Teleport's long-lived private PKI,
+including CA, name, usage, signature, and time checks. The host SSH parser accepts
+the OpenSSH no-expiry value; user identities still expire at their earliest
+certificate limit. Archive builds alone do not prove a device session.
 
-The measured baseline and its limits are in [the benchmark notes](../Benchmarks/README.md)
-and [raw samples](benchmark-results.json). It includes resource snapshots and
-short concurrent commands. Interactive echo latency, CPU/allocation profiles,
-idle wakeups, impaired-network runs, and a same-route reference comparison
-remain separate performance checks. No performance budget is claimed.
+The earlier tests used the public Swift API, not `tsh` as the client. A temporary
+Colima runtime was removed when OrbStack was selected; final controls and native
+runs passed on OrbStack. Physical-device execution was excluded at the user's
+request. Community supports GitHub SSO; local OIDC requires a permitted Enterprise
+setup. Real provider, device lifecycle, and sandboxed browser checks remain open.
 
-The historical SSH report is [ssh-engine-results.json](ssh-engine-results.json).
-It records host/user certificate handling, command execution, PTY resize, SFTP,
-bad signatures, expiry, login denial, and failure cleanup on that test engine.
-Platform archive builds alone do not prove a device session.
+Only the pinned server patch and native arm64 lab have real-server evidence here.
+Other v18 patches, v17, AMD64 execution, and provider/device combinations need
+separate checks. Local builds used Xcode 27.1/Swift 6.4; Apple CI selects Xcode
+26.3/Swift 6.2.3. References were absent during builds: no submodules, mandatory
+reference clones, or recursive fetch steps are used.
 
-The final transport checks cover exact TLS route order and the long-lived private
-PKI certificates issued by Teleport. They retain CA, name, usage, signature, and
-time checks. The host SSH parser accepts the exact OpenSSH no-expiry value;
-the user identity still expires at its earliest applicable certificate limit.
-Physical-device execution was excluded at the user's request.
-
-The Community server uses fixed GitHub SSO endpoints. A local OIDC provider needs
-a permitted Enterprise setup. The package browser code has real loopback,
-encrypted-payload, tamper, cancellation, and stale-input tests. Those tests do not
-establish a real provider sign-in, sandboxed Mac presentation, or physical-device
-background/foreground behavior.
-
-Only the current pinned server patch and native arm64 lab are verified here.
-Other v18 patches, v17, FIPS, AMD64 execution, impaired-network performance, and
-provider/device combinations need their own evidence before a release claim.
-
-Local builds used Xcode 27.1 and Swift 6.4. The Apple CI workflow selects Xcode
-26.3 with Swift 6.2.3 for the resolved dependency graph. Remote results are
-tracked in the repository's GitHub Actions runs.
-
-References were absent during every package build. There is no `.gitmodules`,
-Git link, mandatory reference clone, or recursive-fetch step in this repository.
-
-After testing, all lab containers, volumes, networks, task images, build cache,
-credentials, and temporary SSH archives were removed. The simulator test app,
-task DerivedData, SwiftPM build directories, and temporary logs were removed.
-OrbStack is stopped and remains installed. Colima and Lima were removed.
-The source repository is below 1 MiB. Repeated lab teardown returned success.
-
-Before the first push, an independent security review covered all 106 source,
-configuration, test, license, and documentation files. It found no confirmed
-security vulnerability. Two review changes make native callback object lifetimes
-explicit and defer the lab's exported test identity until the enrollment browser
-exits. The browser can then read only the public CA and its invitation during
-startup. Python and shell syntax, the seven-package SBOM, and absent optional
-references were checked again.
-
-The 20 October 2026 follow-up checked published repository advisories for all
-seven locked Swift dependencies. No listed affected range included the locked
-versions. SwiftNIO 2.104.0 exceeds the latest listed fix, 2.101.0
-([upstream advisory](https://github.com/apple/swift-nio/security/advisories/GHSA-qcc5-f287-vgmq));
-SwiftNIO HTTP/2 1.46.0 exceeds its latest listed fix, 1.45.0
-([upstream advisory](https://github.com/apple/swift-nio-http2/security/advisories/GHSA-q3g2-m552-3r9c)).
+The earlier dependency review checked all seven locked Swift packages on
+20 October 2026. No published affected range included those versions. SwiftNIO
+2.104.0 exceeds the listed fix 2.101.0
+([advisory](https://github.com/apple/swift-nio/security/advisories/GHSA-qcc5-f287-vgmq));
+HTTP/2 1.46.0 exceeds the listed fix 1.45.0
+([advisory](https://github.com/apple/swift-nio-http2/security/advisories/GHSA-q3g2-m552-3r9c)).
 The enrollment npm lock audit reported zero known vulnerabilities. These checks
-cover published source dependency reports, not every test image or local crypto
-archive. The package ships neither test images nor those archives.
+exclude test images and local crypto archives; neither ships in the library.
 
-After the review changes, the 33 macOS tests and the Release package build
-passed again. All three temporary SSH engine archives rebuilt, including the
-failed-key-exchange cleanup check. The native Release harness and the Release
-iOS Simulator smoke app both built. The full live macOS/Simulator session records
-above were produced before these two test-tool changes; they were not rerun for
-this review.
+Historical lab credentials, containers, task images, build files, and logs were
+removed. OrbStack remains installed and stopped. User files and shared caches
+were preserved.

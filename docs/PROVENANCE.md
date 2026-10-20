@@ -2,6 +2,8 @@
 
 This is an independent implementation. The reference package was not imported
 as source or as a dependency. No reference checkout is needed to build or test.
+Teleport `lib/` files were read for wire facts only. They use AGPL terms; no code
+from them was copied or translated. Source inspection is not test evidence.
 
 | Input | Pin | Use |
 | --- | --- | --- |
@@ -30,16 +32,13 @@ pinned [Auth schema](https://github.com/gravitational/teleport/blob/1283425b60ec
 and [MFA scope schema](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/api/proto/teleport/mfa/v1/mfa.proto).
 The independently written CBOR and WebAuthn responses follow those public wire
 types and the standard ES256 signature format. Apple Security, CryptoKit, and
-LocalAuthentication provide hardware operations. No upstream `lib/` implementation
-was copied or translated. Real native registration/login was then checked against
+LocalAuthentication provide hardware operations. Real native registration/login was checked against
 the separately pinned 18.11.4 image with a software test authenticator; this is not
 a Secure Enclave or biometric result.
 
-Discovery, local MFA, public CA export, and browser sign-in are independently
-implemented from the HTTP wire contract and real-server observations. Relevant
-upstream implementation files under `lib/` use AGPL terms; none were copied or
-translated into this package. Source inspection alone does not establish a
-release test result. The real fixture is pinned separately from the API snapshot.
+Discovery, local MFA, public CA export, and browser sign-in follow the HTTP wire
+contract and real-server observations. The fixture pin is separate from the API
+snapshot.
 
 Local browser MFA was checked before implementation against the same source pin:
 
@@ -51,8 +50,7 @@ Local browser MFA was checked before implementation against the same source pin:
 | [Callback format](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/auth/internal/browsermfa/browser_mfa.go) | AES-GCM callback contains a WebAuthn assertion |
 | [WebAuthn wire types](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/auth/webauthntypes/webauthn.go) | Credential, extension, and response byte fields |
 
-These files supplied protocol facts only. No implementation was copied or
-translated. The public v18.11.1 source has matching relevant fields; that source
+The public v18.11.1 source has matching relevant fields; that source
 check does not validate a browser approval on the pinned 18.11.4 server. Real
 browser approval remains pending; native credential wire results are separate.
 
@@ -64,7 +62,6 @@ The internal route checks also used these files at the same source pin:
 | [ALPN route selection](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/srv/alpnproxy/proxy.go#L591-L611) | The first matching protocol in the client's offered order selects the route |
 | [Server route setup](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/service/service.go#L6455-L6462) | The SSH gRPC route passes TLS to its internal mTLS server |
 
-The two `lib/` files were read for wire facts only. No implementation was copied.
 The pinned real server confirmed that the SSH route hint must precede `h2`;
 that route then negotiates `h2`.
 

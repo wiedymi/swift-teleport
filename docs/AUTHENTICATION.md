@@ -1,8 +1,16 @@
 # Authentication contract
 
 Share one `TeleportClient` between tabs that use the same proxy and account.
-The client normalizes the HTTPS origin. A supplied HTTPS CA applies only to
-that origin. HTTP redirects are not followed by the native API client.
+The client normalizes the HTTPS origin, applies supplied HTTPS CAs only to that
+origin, and rejects native API redirects. The [README](../README.md) has usage
+examples; [App integration](INTEGRATION.md) defines storage and UI responsibilities.
+
+Matching account/method callers share one login. Password/TOTP, local browser MFA,
+Secure Enclave MFA, and each SSO connector are separate methods. Different methods
+cannot join a pending login. One canceled caller leaves other callers active;
+canceling the last caller cancels the task. Setup and local deletion run exclusively.
+Sign-out cancels and waits for pending authentication before clearing the identity.
+Another client or process can still replace Teleport's pending challenge.
 
 ## Local login
 
@@ -15,82 +23,69 @@ The client uses these versioned public routes:
 4. `GET /v1/webapi/auth/export?type=tls-user&format=json` and the same route
    with `type=user` obtain the public user CAs through verified HTTPS.
 
-Public key bytes use JSON base64. The requested lifetime uses nanoseconds.
-The client uses one RSA 3072 private key for the issued SSH and TLS credentials.
-This reduces key storage and lets all authentication paths use one key. Other client key algorithms need separate checks.
+Public key bytes use JSON base64; the lifetime uses nanoseconds. Each login creates
+one RSA 3072 private key for both SSH and TLS credentials. This limits key storage
+and uses the same validated key path for all login methods. Other key algorithms
+need separate checks.
 
-The client accepts TOTP only when the server offers it. This password/TOTP API
-does not open a browser. A WebAuthn-only challenge returns the typed `hardwareKey`
-error. Use the separate browser MFA API below for that approval. Passwords and
-TOTP codes are not stored or logged.
-
-Concurrent callers for the same account and authentication method share one login.
-Password/TOTP, local browser MFA, and each SSO connector are separate enum cases;
-one method cannot join another pending method. Canceling one caller leaves the login active
-for other callers. When no caller remains, the client cancels the login.
+TOTP is accepted only when offered by the server. This API does not open a browser.
+A WebAuthn-only challenge returns `unsupportedPolicy(.hardwareKey)`; use the
+browser MFA API below. Passwords and TOTP codes are not stored or logged.
 
 ## Local browser MFA
 
-`login(username:password:browser:ttl:)` uses a local account password and an
-**existing** passkey or security key through the system browser. This is separate
-from GitHub/OIDC/SAML SSO and is not passwordless login.
+`login(username:password:browser:ttl:)` uses a local password and an existing
+passkey or security key through the system browser. It is separate from
+GitHub/OIDC/SAML SSO and still requires a password.
 
 1. Discover and validate the root cluster and policy through verified HTTPS.
-2. Start the same authenticated loopback listener used by SSO.
+2. Start the authenticated loopback listener described under [Browser SSO](#browser-sso).
 3. Send `user`, `pass`, and `browser_mfa_tsh_redirect_url` to
    `/v1/webapi/mfa/login/begin`.
 4. Require `browser_challenge.requestId` and open the same proxy origin at
    `/web/mfa/browser/<requestId>` through `TeleportBrowserPresenter`.
 5. The user signs into the matching Teleport web account and approves with an
-   existing WebAuthn credential. The server authenticates the account, request,
-   browser session, challenge, origin, and credential signature.
+   existing WebAuthn credential. The server checks the account, request, browser
+   session, challenge, origin, and credential signature.
 6. Authenticate and decrypt the loopback callback. Its
    `browser_mfa_webauthn_response` contains an assertion, **not certificates**.
 7. Create the existing RSA key and send `browser_response` with the original
    `requestId` and `webauthnResponse` to `/v1/webapi/mfa/login/finish`, together
    with `user`, `password`, both public keys, an empty `totp_code`, and `ttl`.
-8. Load public user CAs through verified HTTPS and apply the existing account,
-   root cluster, private key, SSH/TLS certificate, signature, and validity checks.
-   Only then can the shared login operation atomically store the identity.
+8. Load public user CAs through verified HTTPS and validate the complete identity
+   as described below. Only then atomically store it.
 
-The server must permit browser MFA (`allow_cli_auth_via_browser`) and the account
-must have an existing WebAuthn device. An absent browser challenge returns
-`unsupportedPolicy(.browserMFA)` without a fallback. Malformed challenges,
-assertions, and certificate responses fail without replacing an identity.
-`discovery.webAuthnConfigured` only reports a configured RP ID. It is a UI hint;
-discovery does not report browser MFA permission. The begin response is authoritative.
+The server must permit browser MFA (`allow_cli_auth_via_browser`), and the account
+needs a registered WebAuthn device. A missing browser challenge returns
+`unsupportedPolicy(.browserMFA)` without fallback. Invalid challenges, assertions,
+or certificates leave the prior identity unchanged. `discovery.webAuthnConfigured`
+reports a configured RP ID, not browser MFA permission; the begin response decides.
 
-The shared listener enforces its existing one-attempt AES-GCM protocol, HTTP
-limits, cancellation, and 180-second timeout. An invalid unauthenticated callback
-does not consume the attempt. An authenticated but invalid assertion ends it.
-Assertion byte fields use bounded URL-safe base64: credential ID 1 KiB, client
-data 16 KiB, authenticator data 64 KiB, signature 16 KiB, and user handle 64 bytes.
-These are client resource limits; the server verifies WebAuthn cryptography.
-Keys are created after approval to avoid key work for disabled or canceled MFA.
-No password, key, callback secret, or authentication response is logged.
+An authenticated but invalid assertion ends the callback attempt. Assertion byte
+fields use bounded base64url: credential ID 1 KiB, client data 16 KiB,
+authenticator data 64 KiB, signature 16 KiB, and user handle 64 bytes. The server
+verifies WebAuthn cryptography. Keys are created after approval, so disabled or
+canceled MFA does not require key creation.
 
-This browser API does not register devices. Native Apple passkeys, PIV signing,
-Device Trust, headless login, and access requests remain outside its scope.
-See [validation limits](VALIDATION.md) before making a real-server or device claim.
+This API does not register devices or read saved Apple passkeys. See
+[validation limits](VALIDATION.md) before making server or device support claims.
 
 ## Optional Secure Enclave MFA
 
 Configure `TeleportSecureEnclaveConfiguration` on the client to enable three
 high-level operations:
 
-- `registerSecureEnclaveCredential(name:otp:browser:prompt:)` requires a current,
-  verified identity. Supply one fresh TOTP code or a browser presenter when the
-  server requires approval. Do not supply both. The device name is at most 30 UTF-8 bytes.
+- `registerSecureEnclaveCredential(name:otp:browser:prompt:)` requires a usable,
+  verified identity and fresh TOTP or browser approval when required by the server.
+  Supply a code or presenter, not both. Device names have a 30 UTF-8 byte limit.
 - `loginWithSecureEnclave(username:password:prompt:ttl:)` uses the local account
   password and a biometric WebAuthn assertion, then returns a complete identity.
 - `deleteSecureEnclaveCredential(username:)` deletes only the local credential.
   It does not remove Teleport's device entry, sign out, or revoke issued certificates.
 
-The library owns WebAuthn, key creation and use, server requests, and certificate
-checks. The app owns screens, browser presentation, localized prompts, the
-Keychain service/access group, and signing settings. There are no SwiftUI, UIKit,
-or AppKit imports in the library. This is a custom, non-resident MFA credential;
-it does not read saved Apple passkeys and is not passwordless login.
+This is a custom, non-resident MFA credential, separate from saved Apple passkeys
+and SSH/TLS keys. Library code owns key use and WebAuthn; app responsibilities are
+in [App integration](INTEGRATION.md#optional-biometric-device-credential).
 
 Registration uses the existing identity's Auth mTLS route:
 
@@ -103,66 +98,57 @@ Registration uses the existing identity's Auth mTLS route:
    `/proto.AuthService/CreateRegisterChallenge` for WebAuthn with MFA usage.
 4. Validate the challenge's account, RP, algorithm, and authenticator requirements.
    Create a device-bound P-256 key with Apple CryptoKit Secure Enclave APIs.
-5. Require a biometric signature and verify it with the new public key before
-   returning registration data.
-   Send the WebAuthn registration to `/proto.AuthService/AddMFADeviceSync`.
+5. Require a biometric signature and verify it with the new public key. Send
+   WebAuthn registration data to `/proto.AuthService/AddMFADeviceSync`.
 6. Require the returned credential ID, RP ID, and COSE public key to match.
    Only then add the local credential record. An existing record is never replaced.
 
-Native login uses `/v1/webapi/mfa/login/begin` and `/finish`. Challenge byte
-fields use Teleport's standard JSON base64; assertion byte fields use base64url.
-The finish field is `webauthn_challenge_response`. The library creates separate
-RSA SSH/TLS keys after biometric approval and applies all existing certificate,
-account, root, trust, and validity checks before atomic identity storage.
+Native login uses `/v1/webapi/mfa/login/begin` and `/finish`. Challenge bytes use
+Teleport's standard JSON base64; assertion bytes use base64url. The finish field
+is `webauthn_challenge_response`. After biometric approval, it creates one new RSA
+key for SSH/TLS, separate from the MFA key. Complete identity checks precede
+atomic storage.
 
-The authentication key uses `privateKeyUsage` and `biometryCurrentSet`. Each
-signature uses a new `LAContext`, with unlock reuse disabled and no password
-fallback button. Cancellation invalidates that context. There is no software
-fallback. Unavailable hardware or biometrics returns a safe typed error.
-Blocking key operations run away from the main actor.
+The key uses `privateKeyUsage` and `biometryCurrentSet`. Each signature uses a new
+`LAContext` with unlock reuse disabled and no passcode fallback. Cancellation
+invalidates the context. Unavailable hardware or biometrics returns a typed error;
+there is no software fallback. Blocking key work runs away from the main actor.
 
 One non-sync Data Protection Keychain item holds the credential ID, root cluster,
 and opaque encrypted key representation. It is `WhenUnlockedThisDeviceOnly`.
-The private key remains in the Secure Enclave. The item account is a hash of the
-exact normalized HTTPS proxy origin and exact username. The RP must equal the
-proxy host; parent-domain and alternate-origin RP configurations are rejected.
-The RP and account are derived from that scope rather than stored twice.
-
-The client excludes overlapping setup, login, deletion, and sign-out operations.
-Matching native login callers share one task. Sign-out cancels setup or login;
-it keeps the registered device credential. Another client or process can still
-replace Teleport's pending challenge, so apps must share one client per profile.
+The private key remains in the Secure Enclave. Its item account is a hash of the
+normalized HTTPS origin and exact username. The RP and account are derived from
+this scope, not stored twice. Sign-out keeps this credential.
 
 Material choices and recovery limits:
 
+- The RP must equal the proxy host. This avoids a public-suffix dependency, but
+  rejects parent-domain and alternate-origin RP configurations.
 - `fmt:none` attestation, a zero AAGUID, and ES256 are used. Teleport verifies
   WebAuthn, but this response does not prove Secure Enclave storage to the server.
-  Direct attestation, resident credentials, and incompatible attachment or
-  algorithm requirements are rejected.
+  Other attestation requests, required resident keys, and incompatible attachment
+  or algorithm requirements are rejected.
 - The signature counter is always zero, as permitted by WebAuthn. This avoids
   mutable counter state, but does not provide counter-based clone detection.
-- The biometric set is fixed. Adding/removing Touch ID fingers or changing Face ID
-  enrollment can invalidate the key. Use another Teleport login method, remove
-  the local record and stale server device entry, and register a new credential.
+- Adding/removing Touch ID fingers or changing Face ID enrollment can invalidate
+  the key. Sign in another way, remove local and stale server entries, then set up
+  a new credential.
 - Server registration and local storage cannot commit together. Interrupted setup,
   a failed local write, or competing clients can leave an unused server entry.
-  Newly created key/blob references are dropped on failure. Remove that entry
-  through Teleport's device-management/recovery UI before repeating setup.
+  New key/blob references are dropped on failure. Remove the server entry through
+  Teleport's recovery UI before repeating setup.
 - A local deletion cannot erase a server registration or an opaque blob copied
   elsewhere. The library does not promise remote revocation or hardware erasure.
 
-Hardware SSH-key policies and Device Trust remain unsupported. This biometric
-MFA key is never substituted for an SSH/TLS key or device-attestation evidence.
-Passwords, keys, callback secrets, and authentication responses are not logged.
-See [app settings and recovery](INTEGRATION.md) and [exact test limits](VALIDATION.md).
+This MFA key cannot satisfy hardware SSH-key or Device Trust policy. See
+[app settings and recovery](INTEGRATION.md) and [exact test limits](VALIDATION.md).
 
 ## Identity and storage
 
-The immutable identity record contains both matching credentials and their
-trust material. Validation checks the private key, account, root cluster,
-certificate signatures, certificate types, and validity times. The client uses
-the selected TLS chain to derive the usable time interval. It does not store
-parallel login or expiry flags.
+The immutable identity contains matching SSH/TLS credentials and trust material.
+Validation checks private-key binding, account, root cluster, certificate types,
+signatures, and validity. The selected TLS chain defines the usable time interval;
+there are no separate login or expiry flags.
 
 The five trust inputs have separate purposes:
 
@@ -174,46 +160,40 @@ The five trust inputs have separate purposes:
 | SSH user CAs | Verify the issued user SSH certificate |
 | SSH host CAs | Verify the destination SSH host certificate |
 
-`TeleportIdentityStore.replace(with:)` must replace the entire record atomically.
-A failed write must preserve the prior record. A persistent app adapter must
-also provide crash-safe writes. `MemoryIdentityStore` is only an in-memory store.
-Encoded identity data contains a private key. The app must protect it, bound
-stored input before decoding it, and keep it out of sync services and logs.
+`TeleportIdentityStore.replace(with:)` must replace the whole record atomically
+and preserve the old record on failure. Persistent stores need crash-safe writes;
+`MemoryIdentityStore` is memory only. See the
+[storage contract](INTEGRATION.md#profile-and-storage). Passwords, keys, browser
+URLs, callback secrets, and authentication responses must stay out of logs.
 
-New operations reject stale results when login or sign-out changes the profile
-while an asynchronous operation waits. Existing connection objects retain the
-exact identity that opened them. On sign-out, the app must close its dependent
-SSH sessions and connection objects. It must then stop all SSH operations before
-it closes transferred descriptors. Local sign-out does not revoke certificates
-on other clients.
+Operations reject stale results after profile authentication changes. Existing
+connections keep the identity that opened them. On sign-out, close dependent SSH
+sessions and stop their SSH work before closing transferred descriptors. Local
+sign-out does not revoke issued certificates.
 
 ## Browser SSO
 
-The presenter opens an HTTPS authorization URL. It returns after the browser
-opens. The library receives the final response on a temporary listener bound to
-`127.0.0.1`. This is separate from the identity provider's callback to Teleport.
-An arbitrary app URL scheme is not part of this contract.
+The presenter opens an HTTPS authorization URL. The final library callback uses a
+temporary `127.0.0.1` listener, separate from the identity provider's callback to
+Teleport. It does not use an app URL scheme.
 
 The client posts to `/v1/webapi/{github|oidc|saml}/login/console`. Its final callback
 has the form `http://127.0.0.1:<port>/callback?secret_key=<fresh hex key>`.
 The server returns an HTTPS browser URL. A final GET or form POST supplies an
-AES-256-GCM encrypted response. The library verifies it with CryptoKit and binds
-the issued credentials to the requested keys and root cluster. An invalid local
-request gets an error response and does not consume the login attempt. The
-attempt expires after 180 seconds.
-
-The app needs permission for incoming loopback connections. It must keep the
-login active when the browser opens. A native custom HTTPS trust adapter does
-not install browser trust. A test browser must trust the test HTTPS CA separately.
+AES-256-GCM encrypted response. CryptoKit authenticates it, and identity validation
+binds the credentials to the requested keys and root cluster. An unauthenticated
+callback does not consume the attempt. Authenticated invalid data ends it. HTTP
+limits apply, cancellation closes the listener, and it expires after 180 seconds.
+This callback transport is shared with local MFA; response types and requests
+remain separate. See [browser ownership and permissions](INTEGRATION.md#browser-presentation).
 
 SAML HTTP-POST authorization binding is unsupported. It returns a typed
 `browserCallback` policy error. The package does not host an HTML form page or
 introduce a remote callback service.
 
-The unit suite proves authenticated native loopback callbacks, wrong-key and
-modified-data rejection, and cancellation. It does not prove a real provider
-login, physical iPhone/iPad lifecycle, or sandboxed Mac presentation. Those
-results must be recorded separately before claiming support.
+Unit checks cover authenticated callbacks, wrong-key/tamper rejection, and
+cancellation. Real provider login, physical device lifecycle, and sandboxed Mac
+presentation remain unverified; see [Validation](VALIDATION.md).
 
 ## Internal Auth route
 
@@ -244,9 +224,9 @@ after the initial cluster response. It does not carry Auth RPCs.
 
 ## Unsupported requirements
 
-The client rejects FIPS mode, hardware-backed SSH private-key policies, automatic Device Trust
-enrollment, and a required message-of-the-day banner. The library has no banner
-display and acknowledgement adapter. It must not silently skip this requirement.
+The client rejects FIPS mode, hardware-backed SSH private-key policies, automatic
+Device Trust enrollment, and required message-of-the-day banners. There is no
+banner display/acknowledgment adapter, so a required banner cannot be skipped.
 Passwordless, headless, per-session MFA, access requests, leaf clusters, legacy
 listeners, and agent forwarding are outside the current scope. A server denial
 does not cause a direct SSH fallback.
