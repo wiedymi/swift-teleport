@@ -3,6 +3,7 @@ import Foundation
 public enum TeleportUnsupportedPolicy: String, Sendable, Codable {
     case legacyProxy, leafCluster, deviceTrust, hardwareKey, passwordless, headless
     case sessionMFA, accessRequest, fips, agentForwarding, browserCallback, browserMFA, messageOfTheDay
+    case authenticatorRequirements
 }
 
 public enum TeleportError: Error, Sendable, Equatable, CustomStringConvertible {
@@ -18,6 +19,11 @@ public enum TeleportError: Error, Sendable, Equatable, CustomStringConvertible {
     case nodeNotFound
     case limitExceeded(String)
     case transport(String)
+    case secureEnclaveUnavailable
+    case biometricsUnavailable
+    case deviceCredentialMissing
+    case deviceCredentialExists
+    case deviceCredentialStorage
 
     public var description: String {
         switch self {
@@ -33,6 +39,11 @@ public enum TeleportError: Error, Sendable, Equatable, CustomStringConvertible {
         case .nodeNotFound: "The Teleport node was not found."
         case .limitExceeded(let name): "Teleport exceeded the \(name) limit."
         case .transport(let reason): "Teleport transport failed: \(reason)."
+        case .secureEnclaveUnavailable: "Secure Enclave authentication is unavailable."
+        case .biometricsUnavailable: "Face ID or Touch ID is unavailable."
+        case .deviceCredentialMissing: "The local device credential is missing or no longer usable."
+        case .deviceCredentialExists: "A local device credential already exists for this account."
+        case .deviceCredentialStorage: "The device credential could not be stored or read."
         }
     }
 }

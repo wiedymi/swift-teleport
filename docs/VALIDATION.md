@@ -2,14 +2,60 @@
 
 Date: 20 October 2026. These are local checks.
 
-## Local browser MFA change
+## Secure Enclave MFA change
+
+The pinned source protocol was checked before implementation. Registration uses
+Auth mTLS and fresh `MANAGE_DEVICES` approval; login uses the versioned public
+WebAuthn endpoints. The test image is still the exact pinned Teleport 18.11.4
+arm64 digest. No new production dependency was added.
+
+The auth-only lab completed a real native test using an injected software P-256
+key. It covered password/TOTP login, native WebAuthn registration, biometric-key
+login protocol, separate issued SSH/TLS keys and complete identity validation,
+wrong-password HTTP 403, local deletion, missing-credential failure, and preservation
+of the existing identity after failures. Verified HTTPS and Auth mTLS stayed active.
+This test used the public high-level operations with internal test-only key/storage
+adapters. Production has no software-key fallback.
+
+The new unit checks cover scoped storage and safe errors; cryptographic assertions;
+account, RP, and cluster binding; credential/public-key acknowledgment; attestation,
+resident-key and algorithm rejection; failed/canceled setup; missing keys; storage
+failure; pending-operation exclusion; and sign-out/caller cancellation. A real
+loopback unit test verifies browser management scope and callback-to-protobuf
+mapping. Existing password/TOTP and browser callback checks remain in the suite.
+
+Checks for this change:
+
+- `swift test` with a fresh auth-only fixture: 70 passed, one browser live test
+  skipped. The native real-server check passed in 53.174 seconds.
+- After moving identity loading inside the exclusive setup operation,
+  `swift test --filter DeviceCredentialOperationTests`: all three passed.
+- `swift build -c release`: passed.
+- `xcodebuild -scheme swift-teleport -destination 'generic/platform=iOS'
+  -configuration Release CODE_SIGNING_ALLOWED=NO build`: passed in default Derived Data.
+- Five Python lab checks, shell syntax, and diff checks passed.
+
+Unverified: real Secure Enclave key creation/use, signed Data Protection Keychain
+access, Face ID/Touch ID prompt enforcement and cancellation, lockout, restart
+persistence, biometric enrollment changes, physical-device recovery, and real
+browser management approval. A software key and simulator cannot establish those
+properties. The auth-only lab has no SSH nodes or transport control and does not
+replace the earlier SSH/terminal tests. Real provider SSO is still unverified.
+
+Material choices are recorded in [AUTHENTICATION.md](AUTHENTICATION.md): password
+plus non-resident biometric MFA; exact proxy-host RP matching; no attestation proof
+to Teleport; zero counters; biometric-set invalidation; one opaque-key record; and
+the server/local storage transaction gap. App settings and recovery steps are in
+[INTEGRATION.md](INTEGRATION.md).
+
+## Earlier local browser MFA change
 
 The new path was checked against the pinned source protocol before code changes.
 Local browser MFA returns a WebAuthn assertion and then requests certificates;
 GitHub/OIDC/SAML SSO returns certificates in its callback. Only their authenticated
 loopback transport is shared.
 
-Current checks:
+Checks at that change:
 
 - `swift test`: 45 passed, one live test skipped. All 33 prior tests passed,
   including password/TOTP request fields, SSO callback authentication and tamper
@@ -53,7 +99,7 @@ Material choices: keep separate local MFA and SSO response types; reuse the
 existing callback cryptography and certificate checks; let Teleport verify
 WebAuthn signatures and request/account scope; create keys after approval; expose
 the configured RP only as a UI hint; reject browser MFA when the server does not
-offer it. No production dependency or registration API was added. Assertion
+offer it. That change added no production dependency or registration API. Assertion
 resource limits are listed in [AUTHENTICATION.md](AUTHENTICATION.md).
 
 ## Earlier checks

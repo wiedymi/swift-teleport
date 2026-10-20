@@ -76,12 +76,14 @@ struct LoginFinish: Encodable {
     let tls_pub_key: Data
     let ttl: Int64
     let browser_response: BrowserMFAResponse?
+    let webauthn_challenge_response: BrowserMFAAssertion?
 
     init(user: String, password: String, totp_code: String, ssh_pub_key: Data, tls_pub_key: Data, ttl: Int64,
-         browser_response: BrowserMFAResponse? = nil) {
+         browser_response: BrowserMFAResponse? = nil, webauthn_challenge_response: BrowserMFAAssertion? = nil) {
         self.user = user; self.password = password; self.totp_code = totp_code
         self.ssh_pub_key = ssh_pub_key; self.tls_pub_key = tls_pub_key; self.ttl = ttl
         self.browser_response = browser_response
+        self.webauthn_challenge_response = webauthn_challenge_response
     }
 }
 

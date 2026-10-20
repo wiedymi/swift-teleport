@@ -6,7 +6,7 @@ a compatibility claim. See the image/source records in
 `IntegrationTests/Docker/versions.lock.json`.
 
 The scope is one root cluster, TLS routing, local password/TOTP login, local
-browser MFA, browser SSO, stable SSH node IDs, and shared short-lived identities. Client
+browser MFA, optional Secure Enclave MFA, browser SSO, stable SSH node IDs, and shared short-lived identities. Client
 keys are RSA 3072. Host certificate validation handles Ed25519, ECDSA
 P-256/P-384/P-521, and RSA SHA-2 signatures.
 
@@ -32,8 +32,18 @@ time limit. Auth startup and user enrollment did not run for that attempt.
 Physical keys and passkeys, browser UI, and device lifecycle are not verified by
 these tests. Existing historical password/TOTP server results remain separate.
 
-There is no native Apple passkey, Secure Enclave, device registration, or PIV
-signing API. The package does not add Mosh,
+Optional Secure Enclave MFA supports custom non-resident P-256 credential
+registration and local password login. The pinned 18.11.4 server accepted the
+registration and login wire flow with an injected software test key. This proves
+server interoperability only. Real Secure Enclave, Face ID/Touch ID, signed
+Keychain storage, and physical-device behavior remain unverified. Fresh browser
+management approval has loopback/mock coverage; its real browser UI is unverified.
+Only an exact proxy-host RP ID is supported. Parent RP domains, resident or
+passwordless credentials, direct hardware attestation, and incompatible
+authenticator requirements are rejected. The new key does not satisfy hardware
+SSH-key or Device Trust policy. See [AUTHENTICATION.md](AUTHENTICATION.md).
+
+There is no native saved Apple passkey or PIV signing API. The package does not add Mosh,
 Eternal Terminal, forwarding, databases, Kubernetes, desktop, or session joining.
 
 Verification results and their exact limits are recorded in

@@ -69,9 +69,92 @@ These are client resource limits; the server verifies WebAuthn cryptography.
 Keys are created after approval to avoid key work for disabled or canceled MFA.
 No password, key, callback secret, or authentication response is logged.
 
-Device registration, native Apple passkeys, custom Secure Enclave credentials,
-PIV signing, Device Trust, headless login, and access requests are outside this API.
+This browser API does not register devices. Native Apple passkeys, PIV signing,
+Device Trust, headless login, and access requests remain outside its scope.
 See [validation limits](VALIDATION.md) before making a real-server or device claim.
+
+## Optional Secure Enclave MFA
+
+Configure `TeleportSecureEnclaveConfiguration` on the client to enable three
+high-level operations:
+
+- `registerSecureEnclaveCredential(name:otp:browser:prompt:)` requires a current,
+  verified identity. Supply one fresh TOTP code or a browser presenter when the
+  server requires approval. Do not supply both. The device name is at most 30 UTF-8 bytes.
+- `loginWithSecureEnclave(username:password:prompt:ttl:)` uses the local account
+  password and a biometric WebAuthn assertion, then returns a complete identity.
+- `deleteSecureEnclaveCredential(username:)` deletes only the local credential.
+  It does not remove Teleport's device entry, sign out, or revoke issued certificates.
+
+The library owns WebAuthn, key creation and use, server requests, and certificate
+checks. The app owns screens, browser presentation, localized prompts, the
+Keychain service/access group, and signing settings. There are no SwiftUI, UIKit,
+or AppKit imports in the library. This is a custom, non-resident MFA credential;
+it does not read saved Apple passkeys and is not passwordless login.
+
+Registration uses the existing identity's Auth mTLS route:
+
+1. Validate discovery policies, proxy, account, and root cluster.
+2. Call `/proto.AuthService/CreateAuthenticateChallenge` with the context user,
+   `MANAGE_DEVICES` scope, and no approval reuse. For browser approval, start the
+   existing encrypted loopback callback and include its redirect URL. A normal
+   login approval has the wrong scope and cannot authorize setup.
+3. Complete the offered TOTP or browser approval, then call
+   `/proto.AuthService/CreateRegisterChallenge` for WebAuthn with MFA usage.
+4. Validate the challenge's account, RP, algorithm, and authenticator requirements.
+   Create a device-bound P-256 key with Apple CryptoKit Secure Enclave APIs.
+5. Require a biometric signature and verify it with the new public key before
+   returning registration data.
+   Send the WebAuthn registration to `/proto.AuthService/AddMFADeviceSync`.
+6. Require the returned credential ID, RP ID, and COSE public key to match.
+   Only then add the local credential record. An existing record is never replaced.
+
+Native login uses `/v1/webapi/mfa/login/begin` and `/finish`. Challenge byte
+fields use Teleport's standard JSON base64; assertion byte fields use base64url.
+The finish field is `webauthn_challenge_response`. The library creates separate
+RSA SSH/TLS keys after biometric approval and applies all existing certificate,
+account, root, trust, and validity checks before atomic identity storage.
+
+The authentication key uses `privateKeyUsage` and `biometryCurrentSet`. Each
+signature uses a new `LAContext`, with unlock reuse disabled and no password
+fallback button. Cancellation invalidates that context. There is no software
+fallback. Unavailable hardware or biometrics returns a safe typed error.
+Blocking key operations run away from the main actor.
+
+One non-sync Data Protection Keychain item holds the credential ID, root cluster,
+and opaque encrypted key representation. It is `WhenUnlockedThisDeviceOnly`.
+The private key remains in the Secure Enclave. The item account is a hash of the
+exact normalized HTTPS proxy origin and exact username. The RP must equal the
+proxy host; parent-domain and alternate-origin RP configurations are rejected.
+The RP and account are derived from that scope rather than stored twice.
+
+The client excludes overlapping setup, login, deletion, and sign-out operations.
+Matching native login callers share one task. Sign-out cancels setup or login;
+it keeps the registered device credential. Another client or process can still
+replace Teleport's pending challenge, so apps must share one client per profile.
+
+Material choices and recovery limits:
+
+- `fmt:none` attestation, a zero AAGUID, and ES256 are used. Teleport verifies
+  WebAuthn, but this response does not prove Secure Enclave storage to the server.
+  Direct attestation, resident credentials, and incompatible attachment or
+  algorithm requirements are rejected.
+- The signature counter is always zero, as permitted by WebAuthn. This avoids
+  mutable counter state, but does not provide counter-based clone detection.
+- The biometric set is fixed. Adding/removing Touch ID fingers or changing Face ID
+  enrollment can invalidate the key. Use another Teleport login method, remove
+  the local record and stale server device entry, and register a new credential.
+- Server registration and local storage cannot commit together. Interrupted setup,
+  a failed local write, or competing clients can leave an unused server entry.
+  Newly created key/blob references are dropped on failure. Remove that entry
+  through Teleport's device-management/recovery UI before repeating setup.
+- A local deletion cannot erase a server registration or an opaque blob copied
+  elsewhere. The library does not promise remote revocation or hardware erasure.
+
+Hardware SSH-key policies and Device Trust remain unsupported. This biometric
+MFA key is never substituted for an SSH/TLS key or device-attestation evidence.
+Passwords, keys, callback secrets, and authentication responses are not logged.
+See [app settings and recovery](INTEGRATION.md) and [exact test limits](VALIDATION.md).
 
 ## Identity and storage
 

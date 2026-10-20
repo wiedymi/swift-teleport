@@ -58,9 +58,28 @@ struct BrowserMFAResponse: Encodable {
     let webauthnResponse: BrowserMFAAssertion
 }
 
-enum BrowserMFALogin {
-    private struct Approval: Decodable { let browser_mfa_webauthn_response: BrowserMFAAssertion }
+/// Local login and device management use the same encrypted browser assertion callback.
+/// Their challenge creation, MFA scopes, and final requests remain separate.
+struct BrowserMFAApproval: Decodable {
+    let browser_mfa_webauthn_response: BrowserMFAAssertion
 
+    static func receive(proxy: TeleportProxy, requestID: String, callback: BrowserCallback,
+                        presenter: any TeleportBrowserPresenter) async throws -> BrowserMFAResponse {
+        guard requestID.utf8.count == 36, let uuid = UUID(uuidString: requestID), uuid.uuidString.lowercased() == requestID.lowercased() else {
+            throw TeleportError.invalidResponse("browser MFA request ID")
+        }
+        try Task.checkCancellation()
+        try await presenter.open(proxy.url.appendingPathComponent("web/mfa/browser").appendingPathComponent(requestID))
+        let bytes = try await callback.wait()
+        let approval: BrowserMFAApproval
+        do { approval = try JSONDecoder().decode(Self.self, from: bytes) }
+        catch { throw TeleportError.invalidResponse("browser MFA approval") }
+        try approval.browser_mfa_webauthn_response.validate()
+        return BrowserMFAResponse(requestId: requestID, webauthnResponse: approval.browser_mfa_webauthn_response)
+    }
+}
+
+enum BrowserMFALogin {
     static func perform(proxy: TeleportProxy, username: String, password: String, ttl: TimeInterval,
                         presenter: any TeleportBrowserPresenter, request: AuthRequest? = nil) async throws -> TeleportIdentity {
         let request: AuthRequest = request ?? { path, query, body in
@@ -74,13 +93,7 @@ enum BrowserMFALogin {
         let begin = LoginBegin(user: username, pass: password, browser_mfa_tsh_redirect_url: callbackURL.absoluteString)
         let challenge: LoginChallenge = try decode(await request("v1/webapi/mfa/login/begin", [], JSONEncoder().encode(begin)), field: "browser MFA challenge")
         guard let id = challenge.browser_challenge?.requestId else { throw TeleportError.unsupportedPolicy(.browserMFA) }
-        guard id.utf8.count == 36, let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id.lowercased() else {
-            throw TeleportError.invalidResponse("browser MFA request ID")
-        }
-        try Task.checkCancellation()
-        try await presenter.open(proxy.url.appendingPathComponent("web/mfa/browser").appendingPathComponent(id))
-        let approval: Approval = try decode(await callback.wait(), field: "browser MFA approval")
-        try approval.browser_mfa_webauthn_response.validate()
+        let approval = try await BrowserMFAApproval.receive(proxy: proxy, requestID: id, callback: callback, presenter: presenter)
         try Task.checkCancellation()
         // The server binds the approved request to this account. Certificate checks below bind both new keys.
         let key = try await Task.detached { try CredentialKey() }.value
@@ -88,7 +101,7 @@ enum BrowserMFALogin {
         let finish = LoginFinish(user: username, password: password, totp_code: "",
                                  ssh_pub_key: Data(key.sshPublicKey.utf8), tls_pub_key: Data(key.tlsPublicKeyPEM.utf8),
                                  ttl: Int64(ttl * 1_000_000_000),
-                                 browser_response: BrowserMFAResponse(requestId: id, webauthnResponse: approval.browser_mfa_webauthn_response))
+                                 browser_response: approval)
         let response: LoginResponse = try decode(await request("v1/webapi/mfa/login/finish", [], JSONEncoder().encode(finish)), field: "browser MFA certificates")
         let userTrust = try await UserAuthorityTrust.load(proxy: proxy, request: request)
         try Task.checkCancellation()

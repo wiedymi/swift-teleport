@@ -80,8 +80,77 @@ It does not prove permission. Handle `unsupportedPolicy(.browserMFA)` if the
 begin response has no browser challenge. This API still needs a password; it
 does not register a credential. Password/TOTP remains a separate API.
 
-UI, Keychain names, biometric policy, profile forms, navigation, and cloud sync
+UI, Keychain names, profile forms, navigation, and cloud sync
 belong to the app. Unsupported server policies return typed errors.
+
+## Optional biometric device credential
+
+Use a stable app-specific Keychain service. Leave `accessGroup` unset for the app's
+default group, or supply a group authorized by its entitlements and provisioning.
+Do not sync or export the local credential record.
+
+```swift
+let configuration = try TeleportSecureEnclaveConfiguration(
+    keychainService: "com.example.app.teleport.device-credentials"
+)
+let client = TeleportClient(proxy: proxy, identityStore: myAtomicSecureStore,
+                            secureEnclave: configuration)
+
+// First sign in with an existing method. Setup does not bypass account recovery.
+try await client.login(username: username, password: password, otp: currentCode)
+try await client.registerSecureEnclaveCredential(
+    name: "This device", browser: presenter, prompt: "Set up Teleport sign-in"
+)
+// Or use a fresh TOTP code instead of the browser parameter for setup.
+
+let identity = try await client.loginWithSecureEnclave(
+    username: username, password: password, prompt: "Approve Teleport sign-in"
+)
+try await client.deleteSecureEnclaveCredential(username: username)
+```
+
+Setup takes an existing usable identity. Its browser approval is a new
+device-management request. Keep the presenter/task alive and apply the same
+window ownership and cancellation rules as browser login. When using TOTP, obtain
+a fresh code for setup; a code already used for login can be rejected as a replay.
+Prompts must be nonempty localized text, at most 1024 UTF-8 bytes, without control
+characters. The library fixes the biometric protection policy; the app cannot
+change it to a passcode fallback.
+
+App settings:
+
+- Provide `NSFaceIDUsageDescription` in the app's Info.plist for Face ID. Touch ID
+  has no equivalent usage-description key. The app supplies each operation's
+  localized prompt text.
+- Use stable app signing and Data Protection Keychain access. Configure Xcode's
+  Keychain Sharing capability when an explicit access group is needed. Match its
+  signed group to the configuration; changing signing/team/group can make the
+  existing record inaccessible. Do not use a shared group unless it is required.
+- Keep incoming loopback permission for browser setup in a sandboxed Mac app.
+  Network, TLS, and ATS requirements above still apply.
+- No Associated Domains, saved Apple passkey access, PIV, or Device Trust setting
+  is required or provided by this feature.
+
+Recovery screens must keep password/TOTP and browser login available. Handle
+`secureEnclaveUnavailable`, `biometricsUnavailable`, `deviceCredentialMissing`,
+`deviceCredentialExists`, and `deviceCredentialStorage` without exposing system
+error details. An unavailable biometric sensor, lockout, changed biometric set,
+changed signing identity, or lost device can require another login method.
+
+Explain the two deletion steps: remove the local credential with the library;
+remove its server device entry in Teleport's device-management UI. Local removal
+does not remove the server entry or clear an issued identity. Call `signOut`
+separately if that is also intended. Failed setup can leave a server-only entry,
+including after a server success followed by a storage failure. Offer recovery
+instructions and a deliberate local reset, not silent replacement or automatic
+server deletion.
+
+Simulator tests do not prove Secure Enclave or biometric enforcement. A signed
+real-device test must cover prompts, cancellation, lockout, persistence after
+restart, biometric-set changes, missing keys, and local/server recovery. See
+[validation](VALIDATION.md). Apple documents the
+[device-bound encrypted key representation](https://developer.apple.com/documentation/cryptokit/storing-cryptokit-keys-in-the-keychain)
+and [biometric-set key control](https://developer.apple.com/documentation/security/secaccesscontrolcreateflags/biometrycurrentset).
 
 ## Resource rules
 

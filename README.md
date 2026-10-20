@@ -43,6 +43,13 @@ This is separate from browser SSO. The server must permit browser MFA.
 Real-server browser MFA and physical-key validation are pending; see
 [the authentication contract](docs/AUTHENTICATION.md) and test limits below.
 
+Optional Secure Enclave MFA adds device credential setup, biometric local-password
+login, and local deletion. The library owns the key and WebAuthn protocol. Apps
+supply screens, prompt text, browser presentation, Keychain configuration, and
+signing settings. See [setup and recovery](docs/INTEGRATION.md#optional-biometric-device-credential).
+Native registration/login passed against the pinned server with a software test
+key. Real Secure Enclave and biometric behavior still need signed-device checks.
+
 Read [the integration contract](docs/INTEGRATION.md),
 [the tested scope](docs/COMPATIBILITY.md), and
 [the SSH engine requirements](docs/SSH-ENGINE.md).

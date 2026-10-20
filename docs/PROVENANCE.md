@@ -17,6 +17,24 @@ the field numbers needed for node pages. It omits unrelated resources and uses
 an internal package name. SwiftProtobuf 1.39.0 produces the checked-in Swift
 messages. No build plugin or schema download runs in a consumer build.
 
+`Protos/device_auth.proto` is an Apache-2.0 wire-compatible subset for the three
+native device-registration RPCs and WebAuthn messages. It keeps original field
+numbers/types and oneof selection, omits unrelated fields and service stubs, and
+uses an internal package name. Its source files are listed in the schema header.
+SwiftProtobuf 1.39.0 produced `device_auth.pb.swift`; it is checked in with its
+notices. No schema/compiler tool is fetched by a consuming app.
+
+The native credential contract was checked before implementation against the
+pinned [Auth schema](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/api/proto/teleport/legacy/client/proto/authservice.proto),
+[WebAuthn schema](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/api/proto/teleport/legacy/types/webauthn/webauthn.proto),
+and [MFA scope schema](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/api/proto/teleport/mfa/v1/mfa.proto).
+The independently written CBOR and WebAuthn responses follow those public wire
+types and the standard ES256 signature format. Apple Security, CryptoKit, and
+LocalAuthentication provide hardware operations. No upstream `lib/` implementation
+was copied or translated. Real native registration/login was then checked against
+the separately pinned 18.11.4 image with a software test authenticator; this is not
+a Secure Enclave or biometric result.
+
 Discovery, local MFA, public CA export, and browser sign-in are independently
 implemented from the HTTP wire contract and real-server observations. Relevant
 upstream implementation files under `lib/` use AGPL terms; none were copied or
@@ -35,8 +53,8 @@ Local browser MFA was checked before implementation against the same source pin:
 
 These files supplied protocol facts only. No implementation was copied or
 translated. The public v18.11.1 source has matching relevant fields; that source
-check does not validate the pinned 18.11.4 server. The new live test remains
-pending until its exact image can be pulled and run.
+check does not validate a browser approval on the pinned 18.11.4 server. Real
+browser approval remains pending; native credential wire results are separate.
 
 The internal route checks also used these files at the same source pin:
 

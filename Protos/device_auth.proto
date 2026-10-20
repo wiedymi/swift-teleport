@@ -1,0 +1,174 @@
+// Copyright 2021-2025 Gravitational, Inc.
+// Licensed under the Apache License, Version 2.0.
+// https://www.apache.org/licenses/LICENSE-2.0
+//
+// Modified: a wire-compatible subset for MFA credential registration.
+// Source revision 1283425b60ec5f60d509ba4c791183d452923ff7:
+// api/proto/teleport/legacy/client/proto/authservice.proto
+// api/proto/teleport/legacy/types/webauthn/webauthn.proto
+// api/proto/teleport/legacy/types/mfa_device.proto
+// api/proto/teleport/legacy/types/metadata.proto
+// api/proto/teleport/mfa/v1/mfa.proto
+//
+// This internal package keeps original field numbers and wire types. It omits
+// unrelated fields, gogoproto options, and service declarations. The caller uses
+// the original /proto.AuthService/... method paths.
+syntax = "proto3";
+package teleportkit.deviceauth;
+
+message ContextUser {}
+message CreateAuthenticateChallengeRequest {
+  ContextUser context_user = 3;
+  ChallengeExtensions challenge_extensions = 6;
+  string proxy_address = 8;
+  string browser_mfa_tsh_redirect_url = 9;
+}
+message ChallengeExtensions {
+  int32 scope = 1;
+  int32 allow_reuse = 2;
+  string user_verification_requirement = 3;
+}
+message MFAAuthenticateChallenge {
+  TOTPChallenge totp = 2;
+  CredentialAssertion webauthn_challenge = 3;
+  int32 mfa_required = 4;
+  SSOChallenge sso_challenge = 5;
+  BrowserMFAChallenge browser_mfa_challenge = 6;
+}
+message TOTPChallenge {}
+message SSOChallenge { string request_id = 1; }
+message BrowserMFAChallenge { string request_id = 1; }
+message MFAAuthenticateResponse {
+  oneof response {
+    TOTPResponse totp = 2;
+    CredentialAssertionResponse webauthn = 3;
+    BrowserMFAResponse browser = 5;
+  }
+}
+message TOTPResponse { string code = 1; }
+message BrowserMFAResponse {
+  string request_id = 1;
+  CredentialAssertionResponse webauthn_response = 2;
+}
+
+message CreateRegisterChallengeRequest {
+  int32 device_type = 2;
+  int32 device_usage = 3;
+  MFAAuthenticateResponse existing_mfa_response = 4;
+}
+message MFARegisterChallenge {
+  oneof request {
+    TOTPRegisterChallenge totp = 2;
+    CredentialCreation webauthn = 3;
+  }
+}
+// Presence is sufficient to reject an unexpected TOTP registration challenge.
+message TOTPRegisterChallenge {}
+message MFARegisterResponse {
+  oneof response { CredentialCreationResponse webauthn = 3; }
+}
+message AddMFADeviceSyncRequest {
+  string new_device_name = 2;
+  MFARegisterResponse new_mfa_response = 3;
+  int32 device_usage = 4;
+  ContextUser context_user = 5;
+}
+message AddMFADeviceSyncResponse { MFADevice device = 1; }
+message MFADevice {
+  Metadata metadata = 4;
+  string id = 5;
+  oneof device {
+    UnsupportedDevice totp = 8;
+    UnsupportedDevice u2f = 9;
+    WebauthnDevice webauthn = 10;
+    UnsupportedDevice sso = 11;
+    UnsupportedDevice browser = 12;
+  }
+}
+// Retain oneof selection without decoding unrelated device content.
+message UnsupportedDevice {}
+message Metadata { string name = 1; }
+message WebauthnDevice {
+  bytes credential_id = 1;
+  bytes public_key_cbor = 2;
+  string attestation_type = 3;
+  bytes aaguid = 4;
+  uint32 signature_counter = 5;
+  bool resident_key = 7;
+  string credential_rp_id = 8;
+}
+
+message CredentialAssertion { PublicKeyCredentialRequestOptions public_key = 1; }
+message PublicKeyCredentialRequestOptions {
+  bytes challenge = 1;
+  int64 timeout_ms = 2;
+  string rp_id = 3;
+  repeated CredentialDescriptor allow_credentials = 4;
+  AuthenticationExtensionsClientInputs extensions = 5;
+  string user_verification = 6;
+}
+message CredentialAssertionResponse {
+  string type = 1;
+  bytes raw_id = 2;
+  AuthenticatorAssertionResponse response = 3;
+  AuthenticationExtensionsClientOutputs extensions = 4;
+}
+message AuthenticatorAssertionResponse {
+  bytes client_data_json = 1;
+  bytes authenticator_data = 2;
+  bytes signature = 3;
+  bytes user_handle = 4;
+}
+message CredentialCreation { PublicKeyCredentialCreationOptions public_key = 1; }
+message PublicKeyCredentialCreationOptions {
+  bytes challenge = 1;
+  RelyingPartyEntity rp = 2;
+  UserEntity user = 3;
+  repeated CredentialParameter credential_parameters = 4;
+  int64 timeout_ms = 5;
+  repeated CredentialDescriptor exclude_credentials = 6;
+  string attestation = 7;
+  AuthenticationExtensionsClientInputs extensions = 8;
+  AuthenticatorSelection authenticator_selection = 9;
+}
+message CredentialCreationResponse {
+  string type = 1;
+  bytes raw_id = 2;
+  AuthenticatorAttestationResponse response = 3;
+  AuthenticationExtensionsClientOutputs extensions = 4;
+}
+message AuthenticatorAttestationResponse {
+  bytes client_data_json = 1;
+  bytes attestation_object = 2;
+}
+message AuthenticationExtensionsClientInputs {
+  string app_id = 1;
+  bool cred_props = 2;
+}
+message AuthenticationExtensionsClientOutputs {
+  bool app_id = 1;
+  CredentialPropertiesOutput cred_props = 2;
+}
+message CredentialPropertiesOutput { bool rk = 1; }
+message AuthenticatorSelection {
+  string authenticator_attachment = 1;
+  bool require_resident_key = 2;
+  string user_verification = 3;
+}
+message CredentialDescriptor {
+  string type = 1;
+  bytes id = 2;
+}
+message CredentialParameter {
+  string type = 1;
+  int32 alg = 2;
+}
+message RelyingPartyEntity {
+  string id = 1;
+  string name = 2;
+}
+message UserEntity {
+  bytes id = 1;
+  string name = 2;
+  string display_name = 3;
+}
