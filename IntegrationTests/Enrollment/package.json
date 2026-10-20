@@ -1,0 +1,6 @@
+{
+  "name": "teleport-e2e-enrollment",
+  "private": true,
+  "type": "module",
+  "dependencies": {"playwright-core": "1.56.1"}
+}

@@ -1,0 +1,27 @@
+name: Teleport server fixture
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  infrastructure-control:
+    name: Linux infrastructure control (not native client E2E)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set explicit loopback DNS for this disposable runner
+        run: printf '\n127.0.0.1 teleport.localhost\n' | sudo tee -a /etc/hosts
+      - name: Run the real Community server control suite
+        run: ./IntegrationTests/Scripts/test-e2e.sh --suite infrastructure
+      - name: Remove any remaining job-owned labs
+        if: always()
+        shell: bash
+        run: |
+          for owner in IntegrationTests/.runs/teleport-e2e-*/owner.json; do
+            [ -f "$owner" ] || continue
+            run_id=$(basename "$(dirname "$owner")")
+            ./IntegrationTests/Scripts/lab.sh down --run-id "$run_id"
+          done

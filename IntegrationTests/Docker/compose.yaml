@@ -1,0 +1,115 @@
+x-node: &node
+  image: ${NODE_IMAGE:?}
+  build:
+    context: .
+    dockerfile: Dockerfile.node
+    args:
+      TELEPORT_IMAGE: ${TELEPORT_IMAGE:?}
+      DEBIAN_IMAGE: ${DEBIAN_IMAGE:?}
+      DEBIAN_SNAPSHOT: ${DEBIAN_SNAPSHOT:?}
+  environment:
+    SSL_CERT_FILE: /run/pki/https-ca.pem
+  cap_drop: [ALL]
+  cap_add: [CHOWN, KILL, SETGID, SETUID]
+  security_opt: [no-new-privileges:true]
+  cpus: 0.5
+  mem_limit: 1536m
+  memswap_limit: 1920m
+  pids_limit: 512
+  tmpfs: ["/tmp:rw,nosuid,nodev,size=64m", "/run:rw,nosuid,nodev,size=16m"]
+  healthcheck:
+    test: [CMD, /usr/local/bin/teleport, debug, readyz]
+    interval: 3s
+    timeout: 3s
+    retries: 40
+  networks: [lab]
+  logging:
+    driver: json-file
+    options: {max-size: 2m, max-file: "1"}
+services:
+  auth-proxy:
+    image: ${TELEPORT_IMAGE:?}
+    environment:
+      SSL_CERT_FILE: /run/pki/https-ca.pem
+    ports: ["127.0.0.1:${PROXY_PORT:?}:${PROXY_PORT:?}"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 768m
+    pids_limit: 128
+    volumes:
+      - ${RUN_DIR:?}/config/auth-proxy.json:/etc/teleport/teleport.yaml:ro
+      - ${RUN_DIR:?}/pki/https-ca.pem:/run/pki/https-ca.pem:ro
+      - ${RUN_DIR:?}/pki/proxy.pem:/run/pki/proxy.pem:ro
+      - ${RUN_DIR:?}/pki/proxy.key:/run/pki/proxy.key:ro
+      - ${RUN_DIR:?}/admin-export:/run/admin-export
+      - ${RUN_DIR:?}/client:/run/client:ro
+      - ${RUN_DIR:?}/roles.yaml:/run/roles.yaml:ro
+      - auth-data:/var/lib/teleport
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=64m"]
+    healthcheck:
+      test: [CMD, /usr/local/bin/teleport, debug, readyz]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    networks:
+      lab:
+        aliases: ["${PROXY_HOST:?}"]
+    logging:
+      driver: json-file
+      options: {max-size: 2m, max-file: "1"}
+  node-a:
+    <<: *node
+    hostname: node-a
+    volumes:
+      - ${RUN_DIR:?}/config/node-a.json:/etc/teleport/teleport.yaml:ro
+      - ${RUN_DIR:?}/pki/https-ca.pem:/run/pki/https-ca.pem:ro
+      - ${RUN_DIR:?}/tokens/node-a:/run/join-token:ro
+      - node-a-data:/var/lib/teleport
+  node-b:
+    <<: *node
+    hostname: node-b
+    volumes:
+      - ${RUN_DIR:?}/config/node-b.json:/etc/teleport/teleport.yaml:ro
+      - ${RUN_DIR:?}/pki/https-ca.pem:/run/pki/https-ca.pem:ro
+      - ${RUN_DIR:?}/tokens/node-b:/run/join-token:ro
+      - node-b-data:/var/lib/teleport
+  node-denied:
+    <<: *node
+    hostname: node-denied
+    volumes:
+      - ${RUN_DIR:?}/config/node-denied.json:/etc/teleport/teleport.yaml:ro
+      - ${RUN_DIR:?}/pki/https-ca.pem:/run/pki/https-ca.pem:ro
+      - ${RUN_DIR:?}/tokens/node-denied:/run/join-token:ro
+      - node-denied-data:/var/lib/teleport
+  enrollment:
+    profiles: [enrollment]
+    image: ${ENROLLMENT_IMAGE:?}
+    build:
+      context: ../Enrollment
+      args:
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:?}
+        DEBIAN_SNAPSHOT: ${DEBIAN_SNAPSHOT:?}
+    environment:
+      PROXY_URL: https://${PROXY_HOST:?}:${PROXY_PORT:?}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 768m
+    pids_limit: 256
+    shm_size: 128m
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=256m"]
+    volumes:
+      - ${RUN_DIR:?}/pki/https-ca.pem:/run/https-ca.pem:ro
+      - ${RUN_DIR:?}/enrollment:/run/enrollment:ro
+      - ${RUN_DIR:?}/client:/run/client
+    networks: [lab]
+    logging:
+      driver: none
+networks:
+  lab: {}
+volumes:
+  auth-data: {}
+  node-a-data: {}
+  node-b-data: {}
+  node-denied-data: {}

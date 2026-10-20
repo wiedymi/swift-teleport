@@ -1,0 +1,13 @@
+kind: role
+version: v7
+metadata:
+  name: e2e-client
+spec:
+  options:
+    max_session_ttl: 30m
+    forward_agent: false
+    port_forwarding: false
+  allow:
+    logins: [vvterm-test]
+    node_labels:
+      e2e-access: [allowed]

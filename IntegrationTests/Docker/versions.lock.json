@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-20",
+  "teleport": {
+    "version": "18.11.4",
+    "image": "public.ecr.aws/gravitational/teleport-distroless",
+    "indexDigest": "sha256:5c7937eac45266739b5cef674d10e37125ca83e0e32de5aae73a2b1bff57cf7a",
+    "platformDigests": {
+      "linux/arm64": "sha256:aa44da1763e5c2564f1eb5e95c9c8d4d9645e905526afc76d7e816f8b700b182",
+      "linux/amd64": "sha256:13395cb91c2968c02220fa3aae68db90e4b383aaf3023e9a9fbe054bc1c5b0b2"
+    }
+  },
+  "debian": {
+    "image": "debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587",
+    "snapshot": "20261005T000000Z",
+    "platformDigests": {
+      "linux/arm64": "sha256:a1b86db52ce3daef089e45aabe36dfec4091f82464c25c1fdcf03de197cbe82a",
+      "linux/amd64": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
+    }
+  },
+  "playwrightCore": "1.56.1",
+  "nodeDockerfileSHA256": "5f9be8b48e3990cc1e5ec816a5cfc9a381d7542b6a77cc5e43a80abc130a5296",
+  "chromium": "154.0.8037.92"
+}
