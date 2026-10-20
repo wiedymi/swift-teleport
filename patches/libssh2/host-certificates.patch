@@ -1,0 +1,233 @@
+--- a/src/hostkey.c
++++ b/src/hostkey.c
+@@ -45,6 +45,75 @@
+ #include <sys/uio.h>
+ #endif
+ 
++/* Import the certified key for SSH key-exchange signature verification.
++ * The complete certificate remains in session->server_hostkey. The caller
++ * MUST validate its CA signature, principal, validity, and critical options
++ * before authentication or opening channels. This is not a trust policy.
++ */
++static int
++hostkey_cert_init(LIBSSH2_SESSION *session,
++                 const unsigned char *data, size_t data_len,
++                 void **abstract, const char *cert_type,
++                 const char *plain_type, unsigned int field_count,
++                 int (*plain_init)(LIBSSH2_SESSION *, const unsigned char *,
++                                   size_t, void **))
++{
++    struct string_buf buf;
++    unsigned char *ignored, *fields, *plain;
++    size_t ignored_len, fields_len, plain_len;
++    size_t type_len = strlen(plain_type);
++    libssh2_uint64_t serial, valid_after, valid_before;
++    uint32_t cert_kind;
++    unsigned int i;
++    int rc;
++
++    buf.data = (unsigned char *)data;
++    buf.dataptr = buf.data;
++    buf.len = data_len;
++    if(_libssh2_match_string(&buf, cert_type) ||
++       _libssh2_get_string(&buf, &ignored, &ignored_len))
++        return -1;
++
++    fields = buf.dataptr;
++    for(i = 0; i < field_count; i++) {
++        if(_libssh2_get_string(&buf, &ignored, &ignored_len))
++            return -1;
++    }
++    fields_len = (size_t)(buf.dataptr - fields);
++
++    if(_libssh2_get_u64(&buf, &serial) ||
++       _libssh2_get_u32(&buf, &cert_kind) || cert_kind != 2 ||
++       _libssh2_get_string(&buf, &ignored, &ignored_len) ||
++       _libssh2_get_string(&buf, &ignored, &ignored_len) ||
++       _libssh2_get_u64(&buf, &valid_after) ||
++       _libssh2_get_u64(&buf, &valid_before))
++        return -1;
++    /* Critical options, extensions, and reserved data are checked by the
++     * caller's certificate policy, not by the key-exchange importer. */
++    for(i = 0; i < 3; i++) {
++        if(_libssh2_get_string(&buf, &ignored, &ignored_len))
++            return -1;
++    }
++    if(_libssh2_get_string(&buf, &ignored, &ignored_len) || !ignored_len ||
++       _libssh2_get_string(&buf, &ignored, &ignored_len) || !ignored_len ||
++       !_libssh2_eob(&buf))
++        return -1;
++
++    /* The encoded plain key is smaller than the encoded certificate. */
++    if(data_len < 4 + type_len || fields_len > data_len - 4 - type_len)
++        return -1;
++    plain_len = 4 + type_len + fields_len;
++    plain = LIBSSH2_ALLOC(session, plain_len);
++    if(!plain)
++        return -1;
++    _libssh2_htonu32(plain, (uint32_t)type_len);
++    memcpy(plain + 4, plain_type, type_len);
++    memcpy(plain + 4 + type_len, fields, fields_len);
++    rc = plain_init(session, plain, plain_len, abstract);
++    LIBSSH2_FREE(session, plain);
++    return rc;
++}
++
+ #if LIBSSH2_RSA
+ /* ***********
+  * ssh-rsa *
+@@ -132,6 +201,16 @@
+     return 0;
+ }
+ 
++static int
++hostkey_method_ssh_rsa_cert_init(LIBSSH2_SESSION *session,
++                                 const unsigned char *data, size_t len,
++                                 void **abstract)
++{
++    return hostkey_cert_init(session, data, len, abstract,
++                             "ssh-rsa-cert-v01@openssh.com", "ssh-rsa", 2,
++                             hostkey_method_ssh_rsa_init);
++}
++
+ /*
+  * hostkey_method_ssh_rsa_initPEM
+  *
+@@ -487,10 +566,10 @@
+ static const LIBSSH2_HOSTKEY_METHOD hostkey_method_ssh_rsa_cert = {
+     "ssh-rsa-cert-v01@openssh.com",
+     SHA_DIGEST_LENGTH,
+-    NULL,
++    hostkey_method_ssh_rsa_cert_init,
+     hostkey_method_ssh_rsa_initPEM,
+     hostkey_method_ssh_rsa_initPEMFromMemory,
+-    NULL,
++    hostkey_method_ssh_rsa_sig_verify,
+     hostkey_method_ssh_rsa_signv,
+     NULL,                       /* encrypt */
+     hostkey_method_ssh_rsa_dtor,
+@@ -503,10 +582,10 @@
+ static const LIBSSH2_HOSTKEY_METHOD hostkey_method_ssh_rsa_sha2_256_cert = {
+      "rsa-sha2-256-cert-v01@openssh.com",
+      SHA256_DIGEST_LENGTH,
+-     NULL,
++     hostkey_method_ssh_rsa_cert_init,
+      hostkey_method_ssh_rsa_initPEM,
+      hostkey_method_ssh_rsa_initPEMFromMemory,
+-     NULL,
++     hostkey_method_ssh_rsa_sha2_256_sig_verify,
+      hostkey_method_ssh_rsa_sha2_256_signv,
+      NULL,                       /* encrypt */
+      hostkey_method_ssh_rsa_dtor,
+@@ -515,10 +594,10 @@
+ static const LIBSSH2_HOSTKEY_METHOD hostkey_method_ssh_rsa_sha2_512_cert = {
+      "rsa-sha2-512-cert-v01@openssh.com",
+      SHA512_DIGEST_LENGTH,
+-     NULL,
++     hostkey_method_ssh_rsa_cert_init,
+      hostkey_method_ssh_rsa_initPEM,
+      hostkey_method_ssh_rsa_initPEMFromMemory,
+-     NULL,
++     hostkey_method_ssh_rsa_sha2_512_sig_verify,
+      hostkey_method_ssh_rsa_sha2_512_signv,
+      NULL,                       /* encrypt */
+      hostkey_method_ssh_rsa_dtor,
+@@ -1081,14 +1160,47 @@
+     NULL,                       /* encrypt */
+     hostkey_method_ssh_ecdsa_dtor,
+ };
++
++static int
++hostkey_method_ssh_ecdsa_256_cert_init(LIBSSH2_SESSION *session,
++                                          const unsigned char *data,
++                                          size_t len, void **abstract)
++{
++    return hostkey_cert_init(session, data, len, abstract,
++                             "ecdsa-sha2-nistp256-cert-v01@openssh.com",
++                             "ecdsa-sha2-nistp256", 2,
++                             hostkey_method_ssh_ecdsa_init);
++}
++
++static int
++hostkey_method_ssh_ecdsa_384_cert_init(LIBSSH2_SESSION *session,
++                                          const unsigned char *data,
++                                          size_t len, void **abstract)
++{
++    return hostkey_cert_init(session, data, len, abstract,
++                             "ecdsa-sha2-nistp384-cert-v01@openssh.com",
++                             "ecdsa-sha2-nistp384", 2,
++                             hostkey_method_ssh_ecdsa_init);
++}
+ 
++static int
++hostkey_method_ssh_ecdsa_521_cert_init(LIBSSH2_SESSION *session,
++                                          const unsigned char *data,
++                                          size_t len, void **abstract)
++{
++    return hostkey_cert_init(session, data, len, abstract,
++                             "ecdsa-sha2-nistp521-cert-v01@openssh.com",
++                             "ecdsa-sha2-nistp521", 2,
++                             hostkey_method_ssh_ecdsa_init);
++}
++
+ static const LIBSSH2_HOSTKEY_METHOD hostkey_method_ecdsa_ssh_nistp256_cert = {
+     "ecdsa-sha2-nistp256-cert-v01@openssh.com",
+     SHA256_DIGEST_LENGTH,
+-    NULL,
++    hostkey_method_ssh_ecdsa_256_cert_init,
+     hostkey_method_ssh_ecdsa_initPEM,
+     hostkey_method_ssh_ecdsa_initPEMFromMemory,
+-    NULL,
++    hostkey_method_ssh_ecdsa_sig_verify,
+     hostkey_method_ssh_ecdsa_signv,
+     NULL,                       /* encrypt */
+     hostkey_method_ssh_ecdsa_dtor,
+@@ -1097,10 +1209,10 @@
+ static const LIBSSH2_HOSTKEY_METHOD hostkey_method_ecdsa_ssh_nistp384_cert = {
+     "ecdsa-sha2-nistp384-cert-v01@openssh.com",
+     SHA384_DIGEST_LENGTH,
+-    NULL,
++    hostkey_method_ssh_ecdsa_384_cert_init,
+     hostkey_method_ssh_ecdsa_initPEM,
+     hostkey_method_ssh_ecdsa_initPEMFromMemory,
+-    NULL,
++    hostkey_method_ssh_ecdsa_sig_verify,
+     hostkey_method_ssh_ecdsa_signv,
+     NULL,                       /* encrypt */
+     hostkey_method_ssh_ecdsa_dtor,
+@@ -1109,10 +1221,10 @@
+ static const LIBSSH2_HOSTKEY_METHOD hostkey_method_ecdsa_ssh_nistp521_cert = {
+     "ecdsa-sha2-nistp521-cert-v01@openssh.com",
+     SHA512_DIGEST_LENGTH,
+-    NULL,
++    hostkey_method_ssh_ecdsa_521_cert_init,
+     hostkey_method_ssh_ecdsa_initPEM,
+     hostkey_method_ssh_ecdsa_initPEMFromMemory,
+-    NULL,
++    hostkey_method_ssh_ecdsa_sig_verify,
+     hostkey_method_ssh_ecdsa_signv,
+     NULL,                       /* encrypt */
+     hostkey_method_ssh_ecdsa_dtor,
+@@ -1328,10 +1440,21 @@
+     hostkey_method_ssh_ed25519_dtor,
+ };
+ 
++static int
++hostkey_method_ssh_ed25519_cert_init(LIBSSH2_SESSION *session,
++                                     const unsigned char *data, size_t len,
++                                     void **abstract)
++{
++    return hostkey_cert_init(session, data, len, abstract,
++                             "ssh-ed25519-cert-v01@openssh.com",
++                             "ssh-ed25519", 1,
++                             hostkey_method_ssh_ed25519_init);
++}
++
+ static const LIBSSH2_HOSTKEY_METHOD hostkey_method_ssh_ed25519_cert = {
+     "ssh-ed25519-cert-v01@openssh.com",
+     SHA256_DIGEST_LENGTH,
+-    hostkey_method_ssh_ed25519_init,
++    hostkey_method_ssh_ed25519_cert_init,
+     hostkey_method_ssh_ed25519_initPEM,
+     hostkey_method_ssh_ed25519_initPEMFromMemory,
+     hostkey_method_ssh_ed25519_sig_verify,

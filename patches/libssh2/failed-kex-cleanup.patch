@@ -1,0 +1,20 @@
+--- a/src/session.c
++++ b/src/session.c
+@@ -949,10 +949,12 @@
+                               &session->startup_key_state.key_state_low);
+     }
+ 
+-    if(session->state & LIBSSH2_STATE_NEWKEYS) {
+-        /* hostkey */
+-        if(session->hostkey && session->hostkey->dtor) {
+-            session->hostkey->dtor(session, &session->server_hostkey_abstract);
+-        }
++    /* Host-key import can succeed before initial key exchange fails. */
++    if(session->hostkey && session->hostkey->dtor &&
++       session->server_hostkey_abstract) {
++        session->hostkey->dtor(session, &session->server_hostkey_abstract);
++    }
++
++    if(session->state & LIBSSH2_STATE_NEWKEYS) {
+ 
+         /* Client to Server */

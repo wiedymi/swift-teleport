@@ -1,0 +1,250 @@
+{
+  "system": "macOS-27.2-arm64-arm-64bit",
+  "sshd": "OpenSSH_10.5p1, LibreSSL 3.3.6",
+  "checks": [
+    {
+      "check": "stock-user-certificate",
+      "user": "ed25519",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=51"
+    },
+    {
+      "check": "stock-user-certificate",
+      "user": "ecdsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=51"
+    },
+    {
+      "check": "stock-user-certificate",
+      "user": "rsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=51"
+    },
+    {
+      "check": "malformed-host-import",
+      "host": "ed25519",
+      "result": "host_import=ssh-ed25519-cert-v01@openssh.com truncated_prefixes=322 passed"
+    },
+    {
+      "check": "stock-host-certificate",
+      "host": "ed25519",
+      "result": "libssh2=1.11.1 result=10 native=-8 exit=-1 host_bytes=322"
+    },
+    {
+      "check": "patched-command",
+      "host": "ed25519",
+      "user": "ed25519",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=322"
+    },
+    {
+      "check": "patched-command",
+      "host": "ed25519",
+      "user": "ecdsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=322"
+    },
+    {
+      "check": "patched-command",
+      "host": "ed25519",
+      "user": "rsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=322"
+    },
+    {
+      "check": "pty-resize",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=322"
+    },
+    {
+      "check": "sftp-roundtrip",
+      "result": "libssh2=1.11.1 result=0 native=-37 exit=0 host_bytes=322"
+    },
+    {
+      "check": "expired-user",
+      "result": "libssh2=1.11.1 result=12 native=-18 exit=-1 host_bytes=322"
+    },
+    {
+      "check": "denied-login",
+      "result": "libssh2=1.11.1 result=12 native=-18 exit=-1 host_bytes=322"
+    },
+    {
+      "check": "host-verifier-denial",
+      "result": "libssh2=1.11.1 result=11 native=0 exit=-1 host_bytes=323"
+    },
+    {
+      "check": "changed-kex-signature",
+      "result": "libssh2=1.11.1 result=10 native=-8 exit=-1 host_bytes=322"
+    },
+    {
+      "check": "malformed-host-import",
+      "host": "ecdsa256",
+      "result": "host_import=ecdsa-sha2-nistp256-cert-v01@openssh.com truncated_prefixes=375 passed"
+    },
+    {
+      "check": "stock-host-certificate",
+      "host": "ecdsa256",
+      "result": "libssh2=1.11.1 result=10 native=-5 exit=-1 host_bytes=375"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa256",
+      "user": "ed25519",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=375"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa256",
+      "user": "ecdsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=375"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa256",
+      "user": "rsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=375"
+    },
+    {
+      "check": "malformed-host-import",
+      "host": "ecdsa384",
+      "result": "host_import=ecdsa-sha2-nistp384-cert-v01@openssh.com truncated_prefixes=407 passed"
+    },
+    {
+      "check": "stock-host-certificate",
+      "host": "ecdsa384",
+      "result": "libssh2=1.11.1 result=10 native=-5 exit=-1 host_bytes=407"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa384",
+      "user": "ed25519",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=407"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa384",
+      "user": "ecdsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=407"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa384",
+      "user": "rsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=407"
+    },
+    {
+      "check": "malformed-host-import",
+      "host": "ecdsa521",
+      "result": "host_import=ecdsa-sha2-nistp521-cert-v01@openssh.com truncated_prefixes=443 passed"
+    },
+    {
+      "check": "stock-host-certificate",
+      "host": "ecdsa521",
+      "result": "libssh2=1.11.1 result=10 native=-5 exit=-1 host_bytes=443"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa521",
+      "user": "ed25519",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=443"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa521",
+      "user": "ecdsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=443"
+    },
+    {
+      "check": "patched-command",
+      "host": "ecdsa521",
+      "user": "rsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=443"
+    },
+    {
+      "check": "malformed-host-import",
+      "host": "rsa",
+      "result": "host_import=rsa-sha2-512-cert-v01@openssh.com truncated_prefixes=550 passed"
+    },
+    {
+      "check": "stock-host-certificate",
+      "host": "rsa",
+      "result": "libssh2=1.11.1 result=10 native=-5 exit=-1 host_bytes=550"
+    },
+    {
+      "check": "patched-command",
+      "host": "rsa",
+      "user": "ed25519",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=550"
+    },
+    {
+      "check": "patched-command",
+      "host": "rsa",
+      "user": "ecdsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=550"
+    },
+    {
+      "check": "patched-command",
+      "host": "rsa",
+      "user": "rsa",
+      "result": "libssh2=1.11.1 result=0 native=0 exit=0 host_bytes=550"
+    }
+  ],
+  "checked_on": "2026-10-20",
+  "source_version": "libssh2 1.11.1",
+  "source_sha256": "d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7",
+  "openssl_source_sha256": "14c826f07c7e433706fb5c69fa9e25dab95684844b4c962a2cf1bf183eb4690e",
+  "build_header_version": "OpenSSL 3.2.0",
+  "linked_crypto_version": "OpenSSL 3.2.0",
+  "vvterm_artifacts_sha256": {
+    "macos/lib/libssh2.a": "b5f3362e65b769cf1df92ba856c1165745a7ca4d6b161f48a88b621fc745446a",
+    "macos/lib/libcrypto.a": "fc13163d3dfce34f74ff06feb057a9eae546c729aa3ce4c1e87cc8121fdbde03",
+    "macos/lib/libssl.a": "db8e9f2ce6f9aa1c1a5ae9a768048170784acc9e720f2c0b3e600896d5f3ac8d",
+    "ios/lib/libssh2.a": "b4fecb6f934f8954d0e79bd83f5ed434db1da357ccf5e233122d4ad28bc25b12",
+    "ios/lib/libcrypto.a": "3c2e4ab5c97be967260ddcd59ff937f4bbf1cc46fae213cf752b26881a7ba69a",
+    "ios/lib/libssl.a": "770a4621bb427e9611a9aff86d3253be405b0236852dcaf7780dd8add3d98b3a",
+    "ios-simulator/lib/libssh2.a": "74f2259dd45beea0a2c7ffb977e98a5f9bb44cff48ee7286ce88b375a99e1ca2",
+    "ios-simulator/lib/libcrypto.a": "c618efac6f2ac9be1835674d77a43bde6b68eb2260c0c9ee2271bcfc1cf407f3",
+    "ios-simulator/lib/libssl.a": "8c63c4680bb489f96c641fc9ed88521349199007e222a13f9970cd381800c64e"
+  },
+  "patches_sha256": {
+    "patches/libssh2/exit-status-presence.patch": "b79766fa348e726fa067491e41716e9a19b1e266c97de718e0a9158364e1e345",
+    "patches/libssh2/failed-kex-cleanup.patch": "5a01050d96a468ee881e1e456465c17fa0bedb97a0948fa9727b88b7a9af56ba",
+    "patches/libssh2/host-certificates.patch": "361cf09bbcff9b945f66c2bfb31063d019353b1f42ea719f2b7924b32e8154e6"
+  },
+  "patched_apple_artifacts": {
+    "macos": {
+      "libssh2_version": "1.11.1",
+      "openssl_header_version": "3.2.0",
+      "openssl_archive_version": "3.2.0",
+      "target": "arm64-apple-macos13.3",
+      "sdk": "MacOSX27.0.sdk",
+      "sha256": {
+        "libssh2": "997fa9db6ff5c54af949f3165ac79d553d0c2001384c96b717ebea36b9ff7073",
+        "libcrypto": "fc13163d3dfce34f74ff06feb057a9eae546c729aa3ce4c1e87cc8121fdbde03",
+        "libssl": "db8e9f2ce6f9aa1c1a5ae9a768048170784acc9e720f2c0b3e600896d5f3ac8d"
+      }
+    },
+    "ios": {
+      "libssh2_version": "1.11.1",
+      "openssl_header_version": "3.2.0",
+      "openssl_archive_version": "3.2.0",
+      "target": "arm64-apple-ios16.1",
+      "sdk": "iPhoneOS27.1.sdk",
+      "sha256": {
+        "libssh2": "0feeb3e750c03bf0d46b5d112c3e1d1bed2a63590bf111c249bc918c0ad6a577",
+        "libcrypto": "3c2e4ab5c97be967260ddcd59ff937f4bbf1cc46fae213cf752b26881a7ba69a",
+        "libssl": "770a4621bb427e9611a9aff86d3253be405b0236852dcaf7780dd8add3d98b3a"
+      }
+    },
+    "ios-simulator": {
+      "libssh2_version": "1.11.1",
+      "openssl_header_version": "3.2.0",
+      "openssl_archive_version": "3.2.0",
+      "target": "arm64-apple-ios16.1-simulator",
+      "sdk": "iPhoneSimulator27.1.sdk",
+      "sha256": {
+        "libssh2": "4b84d331c90e19bfa0e18af1268f87f0b08d15ba3b282c96c08469597f9f4212",
+        "libcrypto": "c618efac6f2ac9be1835674d77a43bde6b68eb2260c0c9ee2271bcfc1cf407f3",
+        "libssl": "8c63c4680bb489f96c641fc9ed88521349199007e222a13f9970cd381800c64e"
+      }
+    }
+  },
+  "additional_checks": {
+    "input_bounds_and_consumed_descriptor_cleanup": 8,
+    "failed_initial_kex_host_key_destructor_before_patch": 0,
+    "failed_initial_kex_host_key_destructor_after_patch": 1
+  }
+}
