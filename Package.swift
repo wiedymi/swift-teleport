@@ -18,6 +18,7 @@ let package = Package(
         .target(name: "TeleportKit", dependencies: [
             "TeleportCore",
             .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOFoundationCompat", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOTLS", package: "swift-nio"),
