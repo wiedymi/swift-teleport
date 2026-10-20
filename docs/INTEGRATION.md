@@ -71,10 +71,11 @@ let identity = try await client.login(username: username, password: password, br
 let ssoIdentity = try await client.login(browser: presenter, connector: connector)
 ```
 
-The presenter returns after it opens the URL. Keep it and the login task alive
-until completion. Cancel the task when its last UI owner leaves, and close the
-browser session when login completes or fails. One canceled waiter does not
-cancel another waiter's login. Do not log browser URLs or callback data.
+The presenter returns after it opens the URL. Keep one app-owned browser/login
+operation per profile. Retain its browser until the shared login completes or
+its last UI owner leaves. One canceled waiter does not cancel another waiter's
+login and must not close a browser still in use. Cancel the operation when its
+last owner leaves, then close the browser. Do not log browser URLs or callback data.
 
 For local accounts, `discover().webAuthnConfigured` can show a browser MFA action.
 It does not prove permission. Handle `unsupportedPolicy(.browserMFA)` if the
