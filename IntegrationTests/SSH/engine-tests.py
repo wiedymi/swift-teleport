@@ -175,15 +175,13 @@ def changed_kex_signature(destination_port):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stock", type=pathlib.Path, required=True)
-    parser.add_argument("--patched", type=pathlib.Path, required=True)
-    parser.add_argument("--import-test", type=pathlib.Path, required=True)
+    parser.add_argument("--engine", type=pathlib.Path, required=True)
     parser.add_argument("--report", type=pathlib.Path)
     args = parser.parse_args()
     login = pwd.getpwuid(os.getuid()).pw_name
     rows = []
 
-    def run(binary, port, host_blob, user, expected=0, command="printf teleport-engine-ok",
+    def run(port, host_blob, user, expected=0, command="printf teleport-engine-ok",
             plain=False, operation=None, expected_output=b"teleport-engine-ok", sftp_path=None):
         environment = dict(os.environ)
         environment.pop("TELEPORT_ENGINE_HOST_ALGORITHMS", None)
@@ -195,7 +193,7 @@ def main():
             environment["TELEPORT_ENGINE_OPERATION"] = operation
         if sftp_path:
             environment["TELEPORT_ENGINE_SFTP_PATH"] = str(sftp_path)
-        result = subprocess.run([str(binary), str(port), login, str(host_blob),
+        result = subprocess.run([str(args.engine), str(port), login, str(host_blob),
                                  str(user) + "-cert.pub", str(user), command],
                                 capture_output=True, timeout=20, env=environment)
         if result.returncode != expected or (expected == 0 and result.stdout != expected_output):
@@ -224,8 +222,8 @@ def main():
             pathlib.Path(str(plain_host) + ".pub").read_text().split()[1], validate=True))
         with server(directory, plain_host, user_ca, "ssh-ed25519", False) as port:
             for user_name, user in users:
-                rows.append({"check": "stock-user-certificate", "user": user_name,
-                             "result": run(args.stock, port, plain_blob, user, plain=True)})
+                rows.append({"check": "plain-host-user-certificate", "user": user_name,
+                             "result": run(port, plain_blob, user, plain=True)})
 
         hosts = [("ed25519", "ed25519", None, "ssh-ed25519-cert-v01@openssh.com")]
         hosts += [("ecdsa" + str(bits), "ecdsa", bits,
@@ -234,20 +232,14 @@ def main():
         for name, algorithm, bits, negotiated in hosts:
             host = key(directory, "host-" + name, algorithm, bits)
             _, host_blob = sign(host_ca, "engine-host", host, "test-node", host=True)
-            imported = subprocess.run([str(args.import_test), str(host_blob)],
-                                      capture_output=True, check=True, timeout=10)
-            rows.append({"check": "malformed-host-import", "host": name,
-                         "result": imported.stdout.decode().strip()})
             with server(directory, host, user_ca, negotiated) as port:
-                rows.append({"check": "stock-host-certificate", "host": name,
-                             "result": run(args.stock, port, host_blob, users[0][1], 10)})
                 for user_name, user in users:
-                    rows.append({"check": "patched-command", "host": name,
+                    rows.append({"check": "host-user-certificate", "host": name,
                                  "user": user_name,
-                                 "result": run(args.patched, port, host_blob, user)})
+                                 "result": run(port, host_blob, user)})
                 if name == "ed25519":
                     rows.append({"check": "pty-resize", "result":
-                                 run(args.patched, port, host_blob, users[0][1],
+                                 run(port, host_blob, users[0][1],
                                      command="sh -c 'test \"$(stty size)\" = \"24 80\" || exit 99; "
                                              "trap \"stty size; exit\" WINCH; "
                                              "printf \"<teleport-pty-ready>\"; "
@@ -255,20 +247,20 @@ def main():
                                      expected_output=b"43 121\r\n")})
                     remote_path = directory / "sftp-roundtrip"
                     rows.append({"check": "sftp-roundtrip", "result":
-                                 run(args.patched, port, host_blob, users[0][1],
+                                 run(port, host_blob, users[0][1],
                                      operation="sftp", sftp_path=remote_path)})
                     if remote_path.exists():
                         raise AssertionError("SFTP test file was not removed")
                     rows.append({"check": "expired-user", "result":
-                                 run(args.patched, port, host_blob, expired, 12)})
+                                 run(port, host_blob, expired, 12)})
                     rows.append({"check": "denied-login", "result":
-                                 run(args.patched, port, host_blob, denied, 12)})
+                                 run(port, host_blob, denied, 12)})
                     wrong_host = directory / "wrong-host.blob"
                     wrong_host.write_bytes(host_blob.read_bytes() + b"\0")
                     rows.append({"check": "host-verifier-denial", "result":
-                                 run(args.patched, port, wrong_host, users[0][1], 11)})
+                                 run(port, wrong_host, users[0][1], 11)})
                     with changed_kex_signature(port) as (proxy_port, changed):
-                        result = run(args.patched, proxy_port, host_blob, users[0][1], 10)
+                        result = run(proxy_port, host_blob, users[0][1], 10)
                         if not changed.is_set():
                             raise AssertionError("KEX signature test did not change a signature")
                         rows.append({"check": "changed-kex-signature", "result": result})
@@ -278,7 +270,7 @@ def main():
         "checks": rows}
     if args.report:
         args.report.write_text(json.dumps(report, indent=2) + "\n")
-    print(f"Passed {len(rows)} local SSH engine checks; 15 host/user certificate pairs, 3 stock user-certificate checks.")
+    print(f"Passed {len(rows)} local SSH engine checks; 15 host/user certificate pairs, 3 plain-host user-certificate checks.")
 
 
 if __name__ == "__main__":

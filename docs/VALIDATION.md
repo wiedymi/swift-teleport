@@ -4,6 +4,9 @@ Date: 20 October 2026. These are local checks.
 
 The records below distinguish package tests, SSH engine tests, server controls,
 and native app tests. A server control result is not a Swift client result.
+SSH results below used a temporary libssh2 1.11.1 build with local changes.
+Those changes and build scripts are removed. A caller-supplied upstream engine
+needs a new run; the saved results do not validate it.
 
 | Check | Observed result |
 | --- | --- |
@@ -11,9 +14,9 @@ and native app tests. A server control result is not a Swift client result.
 | macOS release package build | Passed |
 | iOS package build | Passed, default Xcode output path |
 | iOS Simulator package tests | 29 tests passed on iPhone Duo, iOS 27.1 |
-| Local libssh2 engine matrix | 34 checks passed; exact OpenSSL 3.2.0 headers and VVTerm archives |
+| Historical libssh2 engine matrix | 34 checks passed; exact OpenSSL 3.2.0 headers and VVTerm archives |
 | C adapter bounds and FD cleanup | 8 checks passed |
-| Patched engine platform builds | macOS arm64 13.3, iOS arm64 16.1, iOS Simulator arm64 16.1 |
+| Historical engine platform builds | macOS arm64 13.3, iOS arm64 16.1, iOS Simulator arm64 16.1 |
 | Teleport server infrastructure | Local/TOTP enrollment, two allowed nodes, denied node, PTY/tmux, reverse-tunnel outage, no direct SSH route passed |
 | Native public password/TOTP login | Passed against Teleport 18.11.4; both issued certificate chains and identity record checked |
 | Native node/SSH path | Full fresh-login public-API run passed on OrbStack; both nodes, PTY resize, 256 KiB SFTP, concurrent streams, denials, and sign-out |
@@ -39,9 +42,9 @@ short concurrent commands. Interactive echo latency, CPU/allocation profiles,
 idle wakeups, impaired-network runs, and a same-route reference comparison
 remain separate performance checks. No performance budget is claimed.
 
-The local SSH report is [ssh-engine-results.json](ssh-engine-results.json).
-It proves host/user certificate handling, command execution, PTY resize, SFTP,
-bad signatures, expiry, login denial, and failure cleanup on the test engine.
+The historical SSH report is [ssh-engine-results.json](ssh-engine-results.json).
+It records host/user certificate handling, command execution, PTY resize, SFTP,
+bad signatures, expiry, login denial, and failure cleanup on that test engine.
 Platform archive builds alone do not prove a device session.
 
 The final transport checks cover exact TLS route order and the long-lived private
@@ -92,7 +95,7 @@ cover published source dependency reports, not every test image or local crypto
 archive. The package ships neither test images nor those archives.
 
 After the review changes, the 33 macOS tests and the Release package build
-passed again. All three patched SSH engine archives rebuilt, including the
+passed again. All three temporary SSH engine archives rebuilt, including the
 failed-key-exchange cleanup check. The native Release harness and the Release
 iOS Simulator smoke app both built. The full live macOS/Simulator session records
 above were produced before these two test-tool changes; they were not rerun for

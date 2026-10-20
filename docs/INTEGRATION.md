@@ -9,8 +9,9 @@
 
 The SSH engine must negotiate a host certificate and verify the key exchange
 signature with its certified key. A fingerprint-only host callback is not enough.
-The existing VVTerm libssh2 1.11.1 build needs the small patch described in
-[SSH-ENGINE.md](SSH-ENGINE.md). The standalone product does not bundle that engine.
+The existing VVTerm libssh2 1.11.1 build needs an upstream update when Teleport
+integration starts. Supply a compatible external engine as described in
+[SSH-ENGINE.md](SSH-ENGINE.md). The standalone product does not bundle an engine.
 
 The connection retains the exact credentials that opened its mTLS path. A later
 sign-in cannot replace the credentials of an existing connection. Keep the

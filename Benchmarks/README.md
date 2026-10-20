@@ -45,6 +45,8 @@ same-route reference client require separate measurements.
 
 Full samples are in [benchmark-results.json](../docs/benchmark-results.json).
 The native client used a Release build on Apple M5 Max, macOS 27.2, and Swift 6.4.
+Its SSH engine was a temporary libssh2 1.11.1 build with local changes. Those
+changes are removed; these samples do not measure a new upstream engine.
 OrbStack 2.2.4 ran the pinned arm64 Teleport 18.11.4 server.
 The node had 0.5 CPU, 1536 MiB memory, 384 MiB allowed swap, and 512 process slots.
 Auth/Proxy had 1 CPU, 768 MiB memory, and 128 process slots.

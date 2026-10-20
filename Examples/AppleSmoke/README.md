@@ -25,10 +25,13 @@ Prepare the private config from an enrolled fixture:
 python3 IntegrationTests/Scripts/prepare-apple-smoke.py /path/to/client/fixture.json
 ```
 
-Build the patched test engine for each SDK first. Pass `SSH_ENGINE_ROOT` to
-Xcode. It must contain `include/`, `ios/lib/libssh2.a`, and
+Supply a compatible upstream libssh2 build for each SDK. Pass `SSH_ENGINE_ROOT`
+to Xcode. It must contain `include/`, `ios/lib/libssh2.a`, and
 `ios-simulator/lib/libssh2.a`. `SSH_CRYPTO_ROOT` defaults to VVTerm's checked-in
-OpenSSL libraries. The app does not modify VVTerm or its vendor files.
+OpenSSL libraries. The engine must use matching OpenSSL headers and archives.
+See [the engine contract](../../docs/SSH-ENGINE.md). This repository does not
+download or build the engine. The app does not modify VVTerm or its vendor files.
+Secure storage and the SSH engine remain the consuming app's responsibility.
 
 The default is an arm64 iOS Simulator build with the default Xcode build cache:
 
@@ -36,7 +39,7 @@ The default is an arm64 iOS Simulator build with the default Xcode build cache:
 xcodebuild -project Examples/AppleSmoke/TeleportSmoke.xcodeproj \
   -scheme TeleportSmoke -configuration Debug \
   -destination 'generic/platform=iOS Simulator' \
-  SSH_ENGINE_ROOT=/path/to/test-engine CODE_SIGNING_ALLOWED=NO build
+  SSH_ENGINE_ROOT=/path/to/upstream-engine CODE_SIGNING_ALLOWED=NO build
 ```
 
 Open the project in Xcode, select an arm64 iOS Simulator, and run the app.
@@ -50,8 +53,10 @@ Remove the test app, ignored config, and disposable lab files after the checks.
 Do not archive or distribute an app that contains the test credentials.
 
 On 20 October 2026, the app passed all listed checks on the arm64 iPhone Duo
-Simulator with iOS 27.1, using Teleport 18.11.4 on OrbStack 2.2.4. The wrong
+Simulator with iOS 27.1, using Teleport 18.11.4 on OrbStack 2.2.4 and a temporary
+libssh2 1.11.1 test build with local changes. The wrong
 HTTPS CA was rejected. Commands checked stdout and stderr on separate leases,
 with exact output and exit status. The PTY check confirmed a live size change
 from 24 by 80 to 43 by 121. SFTP compared 256 KiB exactly and removed its remote
-file. Physical devices and browser SSO were not run.
+file. Physical devices and browser SSO were not run. This result does not
+validate a new upstream engine. The earlier local source changes are removed.

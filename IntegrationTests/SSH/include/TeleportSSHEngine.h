@@ -41,7 +41,7 @@ struct TeleportSSHCommand {
     // a newline, then wait. The trap reports the size and exits after resize.
     const char *command;
     // NULL requires host certificates. Plain algorithms are for the separate
-    // local fixture test of stock libssh2 user-certificate support.
+    // local fixture test of user certificates with a plain host key.
     const char *host_key_algorithms;
     const char *sftp_path;
     const unsigned char *input;

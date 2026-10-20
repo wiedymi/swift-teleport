@@ -7,7 +7,7 @@ as source or as a dependency. No reference checkout is needed to build or test.
 | --- | --- | --- |
 | Teleport Apache API | `1283425b60ec5f60d509ba4c791183d452923ff7` | Transport schema, auth resource schema, ALPN/name constants, protocol contract |
 | cad0p/swift-teleport | `77a6bec824f079ce48468ac9a3cad3dda038d3d7` | Design and interoperability review only; no code copied |
-| libssh2 | `1.11.1`, archive SHA-256 in `docs/ssh-engine-results.json` | Test-only engine patch and proof |
+| Historical libssh2 test engine | `1.11.1`, archive SHA-256 in `docs/ssh-engine-results.json` | Recorded test results only; source changes and build scripts removed |
 | Runtime dependencies | exact versions and commits in `Package.resolved` | NIO, HTTP/2, Apple network transport, protobuf |
 
 `Protos/transport_service.proto` is copied from the Apache-2.0
@@ -41,6 +41,10 @@ They are never merged into a broad accept list.
 
 The optional source pins in `refs/pins.json` are research aids only. No submodule,
 recursive checkout, research tree, or reference code is a package input.
+
+SSH integration tests now require a caller-supplied compatible upstream engine.
+No engine is downloaded or built by this repository. See
+[the engine contract](SSH-ENGINE.md) before selecting a build.
 
 Third-party terms are recorded in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 No Teleport executable or image is redistributed by the library. The lab operator

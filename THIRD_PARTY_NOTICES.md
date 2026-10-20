@@ -25,10 +25,11 @@ under MIT terms and other components listed in its notice. SwiftProtobuf's
 bundled compiler sources are build-tool inputs, not part of this library's
 runtime target.
 
-The libssh2 adapter, copied exit-status patch, and host-certificate patch are
-test/integration inputs under the BSD terms in `patches/libssh2/`. They are not
-linked into the public library product. The optional test harness links external
-VVTerm libssh2/OpenSSL archives; their distribution terms remain applicable.
+The original test-only C SSH code uses the BSD-3-Clause terms in
+[licenses/BSD-3-Clause.txt](licenses/BSD-3-Clause.txt), as stated in its source
+files. It is not linked into the public library product. Tests link caller-supplied
+libssh2 and OpenSSL archives under those libraries' own terms.
+This repository distributes no libssh2 source, source changes, or engine binary.
 
 The test server image, Debian base, Chromium, Playwright, Node, and their system
 packages are test tools only. The library does not ship them. The Docker lab

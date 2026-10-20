@@ -10,8 +10,8 @@ TARGETED_DEVICE_FAMILY = 1,2
 SWIFT_STRICT_CONCURRENCY = complete
 SWIFT_OBJC_BRIDGING_HEADER = $(SRCROOT)/Bridge.h
 USER_SCRIPT_SANDBOXING = NO
-SSH_ENGINE_ROOT = $(SRCROOT)/../../.build/ssh-engine
+// Supply SSH_ENGINE_ROOT for a compatible upstream libssh2 build.
 SSH_CRYPTO_ROOT = $(SRCROOT)/../../../../vivy-company/vvterm/Vendor/libssh2
 HEADER_SEARCH_PATHS = $(inherited) "$(SSH_ENGINE_ROOT)/include" "$(SRCROOT)/../../IntegrationTests/SSH/include"
-OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) "$(SSH_ENGINE_ROOT)/ios/lib/libssh2.a" "$(SSH_CRYPTO_ROOT)/ios/lib/libssl.a" "$(SSH_CRYPTO_ROOT)/ios/lib/libcrypto.a" -lz
-OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) "$(SSH_ENGINE_ROOT)/ios-simulator/lib/libssh2.a" "$(SSH_CRYPTO_ROOT)/ios-simulator/lib/libssl.a" "$(SSH_CRYPTO_ROOT)/ios-simulator/lib/libcrypto.a" -lz
+OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) "$(SSH_ENGINE_ROOT)/ios/lib/libssh2.a" "$(SSH_CRYPTO_ROOT)/ios/lib/libcrypto.a" -lz
+OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) "$(SSH_ENGINE_ROOT)/ios-simulator/lib/libssh2.a" "$(SSH_CRYPTO_ROOT)/ios-simulator/lib/libcrypto.a" -lz

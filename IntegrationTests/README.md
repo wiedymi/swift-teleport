@@ -86,6 +86,11 @@ A run's small `report.json` contains only the server version, platform, and name
 
 The lab is one reusable server fixture. VVTerm should consume its manifest at the selected package revision. Do not make a second Compose stack in the app repository. See the [Linear E2E plan](https://linear.app/vivytech/document/teleport-docker-e2e-test-plan-2026-10-16-8434dd2ea251) for the separate native functional, fault, performance, and device release checks.
 
+The native SSH harness requires a compatible external upstream libssh2 build.
+See [the engine contract](../docs/SSH-ENGINE.md) for its inputs. This repository
+does not download or build that engine. The existing VVTerm engine needs an
+upstream update when Teleport integration starts.
+
 ## Local validation
 
 On 20 October 2026, two independent full runs completed real browser enrollment and the infrastructure control checks on Apple M5 Max hardware, macOS 27.2, and a native arm64 Colima 0.10.3 VM (4 CPUs, 4 GiB RAM). Docker Engine was 29.5.2 and Compose was 5.6.0. A separate PTY/tmux check passed with the four listed node capabilities. One full run was removed twice; its local secrets and all of its Docker containers, volumes, and networks were absent after teardown.
@@ -95,5 +100,9 @@ The default test wrapper also runs this same control suite and removes its own r
 A new full run also passed on OrbStack 2.2.4 with Docker Engine 29.8.2, using the same locked images. It completed real browser enrollment and all eight infrastructure checks. A separate OpenSSL probe used the native login identity to complete verified Auth mTLS with SNI `teleport.cluster.local` and negotiated `h2`. The earlier task Colima VM, its disk, and its test runs were removed when the runtime changed to OrbStack.
 
 The [native Apple test app](../docs/apple-smoke-results.txt) also passed on the arm64 iPhone Duo Simulator with iOS 27.1 against that OrbStack run. It used fresh password/TOTP login through the public package API and rejected a wrong HTTPS CA. Its SSH command, live PTY resize, 256 KiB SFTP, and local sign-out checks passed. The app, private config, and its exact default DerivedData directory were removed after the result was saved. No physical device or browser SSO test was run.
+
+The recorded native app and benchmark runs used a temporary libssh2 1.11.1
+engine with local changes. Those changes are removed. The records do not
+validate a new upstream engine.
 
 The final [native benchmark](../docs/benchmark-results.json) passed at the 1536 MiB node cap, including 1, 10, and 25 concurrent connections and an exact 1 MiB SFTP round trip. Final teardown verified zero containers, volumes, images, and build cache records in the fresh task runtime. The run directory and secrets were removed. OrbStack reported no Linux machines and was stopped normally; the app and normal Docker setup remain installed.
