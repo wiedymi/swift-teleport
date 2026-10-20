@@ -15,11 +15,11 @@ final class BoundedHTTP: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     init(proxy: TeleportProxy, limit: Int = 1_048_576) { self.proxy = proxy; self.limit = limit }
 
-    func run(path: String, query: [URLQueryItem] = [], body: Data? = nil) async throws -> Data {
+    func run(path: String, query: [URLQueryItem] = [], body: Data? = nil, method: String? = nil) async throws -> Data {
         var endpoint = URLComponents(url: proxy.url.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { endpoint.queryItems = query }
         var request = URLRequest(url: endpoint.url!)
-        request.httpMethod = body == nil ? "GET" : "POST"
+        request.httpMethod = method ?? (body == nil ? "GET" : "POST")
         request.httpBody = body
         request.timeoutInterval = 60
         request.setValue("application/json", forHTTPHeaderField: "Accept")

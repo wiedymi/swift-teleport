@@ -53,8 +53,8 @@ def compose_command():
         return ['docker-compose']
     raise LabError('Docker Compose is required. Install its CLI plugin or docker-compose.')
 
-def preflight(host=None):
-    if hashlib.sha256((DOCKER / 'Dockerfile.node').read_bytes()).hexdigest() != LOCK['nodeDockerfileSHA256']:
+def preflight(host=None, auth_only=False):
+    if not auth_only and hashlib.sha256((DOCKER / 'Dockerfile.node').read_bytes()).hexdigest() != LOCK['nodeDockerfileSHA256']:
         raise LabError('The node Dockerfile changed. Review its inputs and update versions.lock.json.')
     if not shutil.which('docker'):
         raise LabError('Docker is required. No lab or test was started.')
@@ -85,8 +85,11 @@ class Lab:
         if self.owner.get('runID') != self.path.name or self.owner.get('schemaVersion') != 1:
             raise LabError('Run ownership file does not match.')
         self.env = os.environ.copy()
+        # Fixture mode comes only from the owned run, not the caller's environment.
+        self.env.pop('AUTH_ONLY', None)
         self.env.update(json.loads((self.path / 'compose-env.json').read_text()))
-        self.command = compose_command() + ['--project-name', self.path.name, '--file', str(DOCKER / 'compose.yaml')]
+        compose_file = 'compose.auth.yaml' if self.env.get('AUTH_ONLY') == 'true' else 'compose.yaml'
+        self.command = compose_command() + ['--project-name', self.path.name, '--file', str(DOCKER / compose_file)]
 
     @property
     def proxy_url(self):
@@ -99,7 +102,8 @@ class Lab:
         return self.compose('exec', '-T', 'auth-proxy', '/usr/local/bin/tctl', '--config=/etc/teleport/teleport.yaml', *args, **kwargs)
 
     def prepare_images(self):
-        for name in ('TELEPORT_IMAGE', 'DEBIAN_IMAGE'):
+        names = ('TELEPORT_IMAGE',) if self.env.get('AUTH_ONLY') == 'true' else ('TELEPORT_IMAGE', 'DEBIAN_IMAGE')
+        for name in names:
             reference = self.env[name]
             if execute(['docker', 'image', 'inspect', reference], env=self.env, check=False).returncode:
                 log('Retrieving the pinned base image: ' + reference)
@@ -149,7 +153,10 @@ class Lab:
                     oom = state[2].decode() if state[2] in (b'true', b'false') else 'unknown'
                     user = 'root' if len(state) == 3 else (state[3].decode() if re.fullmatch(rb'[0-9:]{1,24}', state[3]) else 'named-user')
                     log('Initial Auth state: status=' + status + ' exit=' + exit_code + ' oom=' + oom + ' user=' + user)
-            for name, relative in (('config', 'config/auth-proxy.json'), ('HTTPS key', 'pki/proxy.key'), ('admin export', 'admin-export')):
+            paths = [('config', 'config/auth-proxy.json'), ('HTTPS key', 'pki/proxy.key')]
+            if self.env.get('AUTH_ONLY') != 'true':
+                paths.append(('admin export', 'admin-export'))
+            for name, relative in paths:
                 info = (self.path / relative).stat()
                 log('Initial Auth bind ' + name + ': uid=' + str(info.st_uid) + ' gid=' + str(info.st_gid) + ' mode=' + oct(info.st_mode & 0o777))
             output = self.compose('logs', '--no-color', '--tail', '20', 'auth-proxy', check=False, timeout=10).stdout.lower()
@@ -179,9 +186,11 @@ class Lab:
         if proxy.get('tls_routing_enabled') is not True:
             raise LabError('The running proxy did not enable TLS multiplexing.')
         auth = ping.get('auth', {})
-        expected_factor = 'on' if self.env.get('BROWSER_MFA') == 'true' else 'otp'
+        expected_factor = 'on' if self.env.get('BROWSER_MFA') == 'true' or self.env.get('AUTH_ONLY') == 'true' else 'otp'
         if auth.get('type') != 'local' or auth.get('second_factor') != expected_factor:
             raise LabError('The running cluster authentication policy does not match the fixture.')
+        if self.env.get('AUTH_ONLY') == 'true' and auth.get('webauthn', {}).get('rp_id') != self.env['PROXY_HOST']:
+            raise LabError('The running WebAuthn RP does not match the test proxy hostname.')
         return ping
 
     def node_resources(self):
@@ -270,15 +279,16 @@ def pick_port():
     raise LabError('No free proxy port in the bounded range 18443–18543.')
 
 
-def create(host, enroll, browser_mfa=False):
+def create(host, enroll, browser_mfa=False, auth_only=False):
     if not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?', host):
         raise LabError('Invalid proxy hostname.')
-    _, arch = preflight(host)
+    _, arch = preflight(host, auth_only)
     RUNS.mkdir(exist_ok=True, mode=0o700)
     path = RUNS / ('teleport-e2e-' + uuid.uuid4().hex[:12])
     path.mkdir(mode=0o700)
     try:
-        for name in ('pki', 'config', 'tokens', 'admin-export', 'client', 'enrollment', 'browser-mfa'):
+        directories = ('pki', 'config', 'client', 'enrollment', 'auth-state') if auth_only else ('pki', 'config', 'tokens', 'admin-export', 'client', 'enrollment', 'browser-mfa')
+        for name in directories:
             (path / name).mkdir(mode=0o700)
         now = dt.datetime.now(dt.timezone.utc)
         port = pick_port()
@@ -290,6 +300,8 @@ def create(host, enroll, browser_mfa=False):
                'DEBIAN_SNAPSHOT': LOCK['debian']['snapshot'], 'NODE_IMAGE': 'teleport-e2e-node:' + LOCK['teleport']['version'],
                'ENROLLMENT_IMAGE': 'teleport-e2e-enrollment:' + LOCK['playwrightCore'],
                'BROWSER_MFA': 'true' if browser_mfa else 'false'}
+        if auth_only:
+            env.update({'AUTH_ONLY': 'true', 'LAB_UID': str(os.getuid()), 'LAB_GID': str(os.getgid())})
         for key in ('DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'):
             if key in os.environ:
                 env[key] = os.environ[key]
@@ -307,12 +319,12 @@ def create(host, enroll, browser_mfa=False):
                 'auth_service': {'enabled': True, 'cluster_name': cluster, 'proxy_listener_mode': 'multiplex', 'session_recording': 'node', 'authentication': {'type': 'local', 'second_factor': 'otp'}},
                 'proxy_service': {'enabled': True, 'web_listen_addr': '0.0.0.0:' + str(port), 'public_addr': host + ':' + str(port), 'proxy_protocol': 'off', 'https_keypairs': [{'key_file': '/run/pki/proxy.key', 'cert_file': '/run/pki/proxy.pem'}]},
                 'ssh_service': {'enabled': False}}
-        if browser_mfa:
+        if browser_mfa or auth_only:
             auth['auth_service']['authentication'].update({
                 'second_factor': 'on', 'webauthn': {'rp_id': host},
                 'allow_cli_auth_via_browser': True})
         write_json(path / 'config' / 'auth-proxy.json', auth)
-        for node in NODES:
+        for node in (() if auth_only else NODES):
             config = {'version': 'v3', 'teleport': {'nodename': node, 'data_dir': '/var/lib/teleport', 'proxy_server': host + ':' + str(port), 'auth_token': '/run/join-token', 'log': {'severity': 'ERROR'}},
                       'auth_service': {'enabled': False}, 'proxy_service': {'enabled': False},
                       'ssh_service': {'enabled': True, 'force_listen': False, 'labels': {'e2e-access': 'denied' if node == 'node-denied' else 'allowed'}, 'enhanced_recording': {'enabled': False}, 'pam': {'enabled': False}}}
@@ -323,8 +335,9 @@ def create(host, enroll, browser_mfa=False):
         raise
     try:
         lab.prepare_images()
-        log('Building pinned fixtures for ' + arch + '.')
-        lab.build(('node-a', 'enrollment') if enroll else ('node-a',), 900 if enroll else 600)
+        if not auth_only:
+            log('Building pinned fixtures for ' + arch + '.')
+            lab.build(('node-a', 'enrollment') if enroll else ('node-a',), 900 if enroll else 600)
         log('Starting Auth/Proxy with verified HTTPS trust.')
         # Retry only a demonstrated host-port collision; no unrelated failure fallback.
         for attempt in range(3):
@@ -342,7 +355,7 @@ def create(host, enroll, browser_mfa=False):
             auth['proxy_service']['web_listen_addr'] = '0.0.0.0:' + str(port)
             auth['proxy_service']['public_addr'] = host + ':' + str(port)
             write_json(path / 'config' / 'auth-proxy.json', auth)
-            for node in NODES:
+            for node in (() if auth_only else NODES):
                 config_path = path / 'config' / (node + '.json')
                 config = json.loads(config_path.read_text())
                 config['teleport']['proxy_server'] = host + ':' + str(port)
@@ -359,41 +372,54 @@ def create(host, enroll, browser_mfa=False):
         if not match:
             raise LabError('The pinned tctl invitation output is unsupported.')
         write_json(path / 'enrollment' / 'invitation.json', {'username': 'e2e-user', 'token': match.group(1)})
-        for node in NODES:
+        if auth_only:
+            shutil.copyfile(path / 'enrollment' / 'invitation.json', path / 'client' / 'enrollment-invitation.json')
+        for node in (() if auth_only else NODES):
             token = lab.auth('tokens', 'add', '--type=node', '--ttl=10m', '--format=text').stdout.decode().strip()
             if not re.fullmatch(r'[a-zA-Z0-9_-]{16,256}', token):
                 raise LabError('The pinned tctl node-token output is unsupported.')
             (path / 'tokens' / node).write_text(token)
-        log('Starting three nodes through verified reverse tunnels.')
-        lab.compose('up', '--detach', *NODES, timeout=120)
-        for node in NODES:
-            lab.wait(lambda name=node: lab.ready(name), node + ' process readiness')
-        resources = lab.wait(lab.node_resources, 'Expected registered nodes')
+        resources = {}
+        if not auth_only:
+            log('Starting three nodes through verified reverse tunnels.')
+            lab.compose('up', '--detach', *NODES, timeout=120)
+            for node in NODES:
+                lab.wait(lambda name=node: lab.ready(name), node + ' process readiness')
+            resources = lab.wait(lab.node_resources, 'Expected registered nodes')
         if enroll:
             log('Completing real browser password/TOTP enrollment with trusted HTTPS.')
             result = lab.compose('run', '--rm', '--no-deps', 'enrollment', timeout=180 if browser_mfa else 90, check=False)
             if result.returncode:
                 log(result.stderr.decode(errors='replace')[-2000:])
                 raise LabError('Local browser enrollment failed.')
-        lab.auth('auth', 'sign', '--user=e2e-user', '--format=file', '--ttl=30m', '--out=/run/admin-export/identity')
-        shutil.copyfile(path / 'admin-export' / 'identity', path / 'client' / 'identity')
-        log('Running the separate official-client infrastructure control.')
-        checks = lab.control()
+        checks = []
+        if not auth_only:
+            lab.auth('auth', 'sign', '--user=e2e-user', '--format=file', '--ttl=30m', '--out=/run/admin-export/identity')
+            shutil.copyfile(path / 'admin-export' / 'identity', path / 'client' / 'identity')
+            log('Running the separate official-client infrastructure control.')
+            checks = lab.control()
         manifest = {'schemaVersion': 1, 'proxyURL': lab.proxy_url, 'clusterName': cluster,
                     'serverVersion': LOCK['teleport']['version'], 'httpsCAFile': str(path / 'client' / 'https-ca.pem'),
-                    'identityFile': str(path / 'client' / 'identity'),
-                    'nodes': [{'name': name, 'id': resources[name], 'authorized': name != 'node-denied'} for name in NODES],
-                    'policy': {'authentication': 'local', 'secondFactor': 'on' if browser_mfa else 'otp', 'tlsRouting': True}}
+                    'nodes': [{'name': name, 'id': resources[name], 'authorized': name != 'node-denied'} for name in (() if auth_only else NODES)],
+                    'policy': {'authentication': 'local', 'secondFactor': 'on' if browser_mfa or auth_only else 'otp', 'tlsRouting': True}}
+        if auth_only:
+            manifest['authOnly'] = True
+            manifest['enrollmentInvitationFile'] = str(path / 'client' / 'enrollment-invitation.json')
+        else:
+            manifest['identityFile'] = str(path / 'client' / 'identity')
         if browser_mfa:
             manifest['browserMFA'] = True
         if enroll:
             manifest['localCredentialsFile'] = str(path / 'client' / 'local-credentials.json')
         write_json(path / 'client' / 'fixture.json', manifest)
         version_output = lab.compose('exec', '-T', 'auth-proxy', '/usr/local/bin/teleport', 'version').stdout.decode().strip()
-        write_json(path / 'report.json', {'schemaVersion': 1, 'runID': path.name, 'platform': 'linux/' + arch,
+        report = {'schemaVersion': 1, 'runID': path.name, 'platform': 'linux/' + arch,
                    'serverVersion': LOCK['teleport']['version'], 'infrastructureControl': checks,
                    'localEnrollment': enroll, 'browserMFAEnrollment': browser_mfa,
-                   'teleportVersionOutput': version_output})
+                   'teleportVersionOutput': version_output}
+        if auth_only:
+            report['authOnly'] = True
+        write_json(path / 'report.json', report)
         for file in path.rglob('*'):
             if file.is_file():
                 file.chmod(0o600)
@@ -413,16 +439,19 @@ def main():
     parser.add_argument('--host', default='teleport.localhost')
     parser.add_argument('--without-enrollment', action='store_true', help='Transport-only fixture; report explicitly excludes local login.')
     parser.add_argument('--browser-mfa', action='store_true', help='Enable browser MFA and register a disposable virtual WebAuthn credential.')
+    parser.add_argument('--auth-only', action='store_true', help='Start only the pinned Auth/Proxy and issue a private invitation for native authentication tests. No browser, nodes, or transport control runs.')
     args = parser.parse_args()
     os.umask(0o077)
     if args.operation == 'preflight':
-        _, arch = preflight(args.host)
+        _, arch = preflight(args.host, args.auth_only)
         print(json.dumps({'dockerPlatform': 'linux/' + arch, 'ready': True}))
         return
     if args.operation == 'up':
+        if args.auth_only and (args.browser_mfa or args.without_enrollment):
+            raise LabError('--auth-only cannot be combined with other fixture modes.')
         if args.browser_mfa and args.without_enrollment:
             raise LabError('Browser MFA requires enrollment.')
-        lab = create(args.host, not args.without_enrollment, args.browser_mfa)
+        lab = create(args.host, not args.without_enrollment and not args.auth_only, args.browser_mfa, args.auth_only)
         print(lab.path / 'client' / 'fixture.json')
         return
     if args.operation == 'clean-stale':
@@ -442,6 +471,8 @@ def main():
     if args.operation == 'down':
         lab.down()
     elif args.operation == 'control':
+        if lab.env.get('AUTH_ONLY') == 'true':
+            raise LabError('The auth-only fixture has no SSH infrastructure control.')
         print(json.dumps({'infrastructureControl': lab.control()}))
     else:
         raw = lab.compose('ps', '--all', '--format=json').stdout.decode().strip()

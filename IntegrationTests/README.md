@@ -44,7 +44,7 @@ The default lab keeps its password/TOTP policy. `up --browser-mfa` instead enabl
 TOTP and WebAuthn, sets the test hostname as the WebAuthn RP ID, and permits CLI
 browser approval. Test provisioning uses the enrolled user's TOTP to register
 one virtual USB security key through the browser's WebAuthn API and the server's
-normal device APIs. The library does not register devices.
+normal device APIs. This browser MFA check uses an existing test device.
 
 Run the public Swift API test from this repository on macOS:
 
@@ -79,6 +79,44 @@ within the 15-minute limit. Auth startup and enrollment did not run. No version,
 TLS check, or system trust setting was changed. Syntax and unit checks do not
 establish real browser MFA support. Real-provider SSO remains outside this lab.
 
+### Device credential protocol check
+
+`up --auth-only` starts only the same pinned Auth/Proxy. It does not build
+Chromium or SSH nodes. The fixture uses WebAuthn and TOTP, verified HTTPS, and a
+new local user invitation. Auth/Proxy runs with the controller's numeric UID
+and GID so it can read private `0600` files and write its own `0700` state
+directory without extra capabilities. This mode does not run SSH transport
+control checks.
+
+On macOS, run the native test with:
+
+```sh
+./IntegrationTests/Scripts/test-e2e.sh --suite device-credential -- swift test --filter DeviceCredentialLiveTests
+```
+
+The wrapper removes its lab after the command ends. For a lab kept for review,
+use `lab.sh up --auth-only`, set `TELEPORT_DEVICE_CREDENTIAL_FIXTURE` to its
+printed fixture path, and run the same Swift test. Then remove the run with
+`lab.sh down`. Without this variable, the live test reports a skip. Each run
+needs a new invitation; do not reuse a fixture after its enrollment completes.
+
+The test uses Apple's Vision QR reader to get the new user's TOTP seed from
+Teleport's enrollment API. It verifies password/TOTP certificate login, device
+registration through Auth mTLS, a fresh device credential login, certificate
+and identity storage checks, and local deletion. An internal test-only software
+P-256 key replaces the Secure Enclave. TOTP authorizes registration. These
+checks can establish real server protocol support. They do not test Secure
+Enclave hardware, Face ID, Touch ID, browser approval for device registration,
+or a physical device. Production code does not use the test key.
+
+On 20 October 2026, the auth-only fixture and this native test passed on the
+arm64 macOS host with OrbStack 2.2.4 and Docker Engine 29.8.2. Verified HTTPS
+discovery and the exact 18.11.4 binary check passed. The native test passed all
+its registration, device login, certificate, wrong-password rejection, local
+deletion, and retained-identity checks in 61.984 seconds. A final run with a
+fresh fixture passed these checks again in 53.174 seconds. The software test
+key and TOTP approval limits above still apply.
+
 The proxy binds only `127.0.0.1`. The macOS and iOS Simulator clients use this same fixture and receive its public HTTPS CA through `TeleportProxy`. No system trust change is needed. Physical device tests need a separate reachable test environment and are outside this local run.
 
 The [Apple test app](../Examples/AppleSmoke/README.md) has the exact-domain ATS setting that Apple requires for URLSession manual private-CA trust. It applies only to `teleport.localhost`; the package still validates HTTPS, CA, hostname, and certificate dates. Public CA proxies do not need it. See Apple's [manual trust documentation](https://developer.apple.com/documentation/Foundation/performing-manual-server-trust-authentication).
@@ -94,11 +132,13 @@ The [Apple test app](../Examples/AppleSmoke/README.md) has the exact-domain ATS 
 | `clusterName` | Actual isolated cluster name |
 | `serverVersion` | Verified server patch |
 | `httpsCAFile` | Public HTTPS CA PEM file path |
-| `identityFile` | Complete short-lived `tctl auth sign --format=file` identity path |
+| `identityFile` | Complete short-lived `tctl auth sign --format=file` identity path; absent from the auth-only fixture |
 | `localCredentialsFile` | Restricted username, fresh password, and TOTP seed file path; present only after enrollment |
 | `nodes` | Node name, actual resource ID, and expected authorization |
 | `policy` | Expected local authentication, TOTP, and TLS routing policy |
 | `browserMFA` | `true` only for the optional WebAuthn fixture |
+| `authOnly` | `true` only for the native authentication fixture; no SSH nodes or control checks |
+| `enrollmentInvitationFile` | Private invitation token file, present only for the auth-only fixture |
 
 Only the `client` directory belongs in the native SSH harness's inputs. The optional browser MFA test also uses the lab-owned browser helper directory. Both contain private user material and must stay private. Neither has server signing keys, an administrative identity, or server state. Do not upload them as CI artifacts.
 

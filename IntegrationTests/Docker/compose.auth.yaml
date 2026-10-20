@@ -1,0 +1,34 @@
+# A small authentication fixture. The default multi-node fixture is unchanged.
+services:
+  auth-proxy:
+    image: ${TELEPORT_IMAGE:?}
+    user: "${LAB_UID:?}:${LAB_GID:?}"
+    environment:
+      SSL_CERT_FILE: /run/pki/https-ca.pem
+    ports: ["127.0.0.1:${PROXY_PORT:?}:${PROXY_PORT:?}"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 768m
+    pids_limit: 128
+    volumes:
+      - ${RUN_DIR:?}/config/auth-proxy.json:/etc/teleport/teleport.yaml:ro
+      - ${RUN_DIR:?}/pki/https-ca.pem:/run/pki/https-ca.pem:ro
+      - ${RUN_DIR:?}/pki/proxy.pem:/run/pki/proxy.pem:ro
+      - ${RUN_DIR:?}/pki/proxy.key:/run/pki/proxy.key:ro
+      - ${RUN_DIR:?}/roles.yaml:/run/roles.yaml:ro
+      - ${RUN_DIR:?}/auth-state:/var/lib/teleport
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=64m"]
+    healthcheck:
+      test: [CMD, /usr/local/bin/teleport, debug, readyz]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    networks:
+      lab:
+        aliases: ["${PROXY_HOST:?}"]
+    logging:
+      driver: json-file
+      options: {max-size: 2m, max-file: "1"}
+networks:
+  lab: {}
