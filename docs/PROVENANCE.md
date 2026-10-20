@@ -23,6 +23,21 @@ upstream implementation files under `lib/` use AGPL terms; none were copied or
 translated into this package. Source inspection alone does not establish a
 release test result. The real fixture is pinned separately from the API snapshot.
 
+Local browser MFA was checked before implementation against the same source pin:
+
+| Source | Wire fact checked |
+| --- | --- |
+| [Local login requests](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/client/weblogin.go) | Begin redirect field, finish assertion, public keys, and lifetime |
+| [MFA types](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/client/mfatypes/mfatypes.go) | Browser challenge and response fields |
+| [Browser approval](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/auth/browser_mfa.go) | One-use request, account, browser session, and WebAuthn checks |
+| [Callback format](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/auth/internal/browsermfa/browser_mfa.go) | AES-GCM callback contains a WebAuthn assertion |
+| [WebAuthn wire types](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/auth/webauthntypes/webauthn.go) | Credential, extension, and response byte fields |
+
+These files supplied protocol facts only. No implementation was copied or
+translated. The public v18.11.1 source has matching relevant fields; that source
+check does not validate the pinned 18.11.4 server. The new live test remains
+pending until its exact image can be pulled and run.
+
 The internal route checks also used these files at the same source pin:
 
 | Source | Wire fact checked |

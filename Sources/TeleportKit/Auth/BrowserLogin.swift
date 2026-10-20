@@ -43,12 +43,15 @@ final class BrowserCallback: @unchecked Sendable {
     private let queue = DispatchQueue(label: "TeleportKit.browser-callback")
     private let listener: NWListener
     private let key = SymmetricKey(size: .bits256)
+    private let timeout: TimeInterval
     private var ready: CheckedContinuation<URL, any Error>?
     private var waiter: CheckedContinuation<Data, any Error>?
     private var result: Result<Data, any Error>?
     private var connections = [UUID: NWConnection]()
 
-    init() throws {
+    init(timeout: TimeInterval = 180) throws {
+        guard timeout.isFinite, timeout > 0, timeout <= 180 else { throw TeleportError.invalidConfiguration("browser timeout") }
+        self.timeout = timeout
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: parameters)
@@ -63,7 +66,7 @@ final class BrowserCallback: @unchecked Sendable {
                     listener.stateUpdateHandler = { [weak self] state in self?.state(state) }
                     listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
                     listener.start(queue: queue)
-                    queue.asyncAfter(deadline: .now() + 180) { [weak self] in self?.complete(.failure(TeleportError.transport("browser login timeout"))) }
+                    queue.asyncAfter(deadline: .now() + timeout) { [weak self] in self?.complete(.failure(TeleportError.transport("browser login timeout"))) }
                 }
             }
         } onCancel: { self.close() }

@@ -1,10 +1,13 @@
 import Foundation
 import TeleportCore
 
+typealias AuthRequest = @Sendable (_ path: String, _ query: [URLQueryItem], _ body: Data?) async throws -> Data
+
 struct ProxyPing: Decodable, Sendable {
     struct Auth: Decodable, Sendable {
         struct Connector: Decodable, Sendable { let name: String; let display: String? }
         struct DeviceTrust: Decodable, Sendable { let auto_enroll: Bool? }
+        struct WebAuthn: Decodable, Sendable { let rp_id: String? }
         let type: String
         let second_factor: String?
         let private_key_policy: String?
@@ -13,6 +16,7 @@ struct ProxyPing: Decodable, Sendable {
         let saml: Connector?
         let device_trust: DeviceTrust?
         let has_motd: Bool?
+        let webauthn: WebAuthn?
     }
     struct Proxy: Decodable, Sendable { let tls_routing_enabled: Bool }
     let auth: Auth
@@ -39,15 +43,26 @@ struct ProxyPing: Decodable, Sendable {
             if let value { connectors.append(TeleportConnector(kind: kind, id: value.name, displayName: value.display ?? value.name)) }
         }
         return TeleportDiscovery(clusterName: cluster_name, serverVersion: server_version, authenticationType: auth.type,
-                                 secondFactor: auth.second_factor ?? "", connectors: connectors)
+                                 secondFactor: auth.second_factor ?? "", connectors: connectors,
+                                 webAuthnConfigured: !(auth.webauthn?.rp_id ?? "").isEmpty)
     }
 }
 
-struct LoginBegin: Encodable { let user: String; let pass: String }
+struct LoginBegin: Encodable {
+    let user: String
+    let pass: String
+    let browser_mfa_tsh_redirect_url: String?
+
+    init(user: String, pass: String, browser_mfa_tsh_redirect_url: String? = nil) {
+        self.user = user; self.pass = pass; self.browser_mfa_tsh_redirect_url = browser_mfa_tsh_redirect_url
+    }
+}
 struct LoginChallenge: Decodable {
+    struct BrowserChallenge: Decodable { let requestId: String }
     let totp_challenge: Bool?
     let webauthn_challenge: JSONValue?
     let sso_challenge: JSONValue?
+    let browser_challenge: BrowserChallenge?
 }
 enum JSONValue: Decodable {
     case object
@@ -60,6 +75,14 @@ struct LoginFinish: Encodable {
     let ssh_pub_key: Data
     let tls_pub_key: Data
     let ttl: Int64
+    let browser_response: BrowserMFAResponse?
+
+    init(user: String, password: String, totp_code: String, ssh_pub_key: Data, tls_pub_key: Data, ttl: Int64,
+         browser_response: BrowserMFAResponse? = nil) {
+        self.user = user; self.password = password; self.totp_code = totp_code
+        self.ssh_pub_key = ssh_pub_key; self.tls_pub_key = tls_pub_key; self.ttl = ttl
+        self.browser_response = browser_response
+    }
 }
 
 struct LoginResponse: Decodable, Sendable {
@@ -99,9 +122,12 @@ struct UserAuthorityTrust: Sendable {
     let sshKeys: [String]
     private struct Export: Decodable { let data: Data }
 
-    static func load(proxy: TeleportProxy) async throws -> Self {
+    static func load(proxy: TeleportProxy, request: AuthRequest? = nil) async throws -> Self {
+        let request: AuthRequest = request ?? { path, query, body in
+            try await BoundedHTTP(proxy: proxy).run(path: path, query: query, body: body)
+        }
         func fetch(_ type: String) async throws -> [Data] {
-            let bytes = try await BoundedHTTP(proxy: proxy).run(path: "v1/webapi/auth/export", query: [URLQueryItem(name: "type", value: type), URLQueryItem(name: "format", value: "json")])
+            let bytes = try await request("v1/webapi/auth/export", [URLQueryItem(name: "type", value: type), URLQueryItem(name: "format", value: "json")], nil)
             let entries = try JSONDecoder().decode([Export].self, from: bytes)
             guard !entries.isEmpty, entries.count <= 32, entries.allSatisfy({ $0.data.count <= 262_144 }) else { throw TeleportError.invalidResponse("user authority export") }
             return entries.map(\.data)

@@ -2,7 +2,7 @@ import Foundation
 
 public enum TeleportUnsupportedPolicy: String, Sendable, Codable {
     case legacyProxy, leafCluster, deviceTrust, hardwareKey, passwordless, headless
-    case sessionMFA, accessRequest, fips, agentForwarding, browserCallback, messageOfTheDay
+    case sessionMFA, accessRequest, fips, agentForwarding, browserCallback, browserMFA, messageOfTheDay
 }
 
 public enum TeleportError: Error, Sendable, Equatable, CustomStringConvertible {
@@ -72,10 +72,13 @@ public struct TeleportDiscovery: Sendable, Equatable {
     public let authenticationType: String
     public let secondFactor: String
     public let connectors: [TeleportConnector]
+    /// A WebAuthn RP is configured. The login challenge decides whether browser MFA is permitted.
+    public let webAuthnConfigured: Bool
 
-    public init(clusterName: String, serverVersion: String, authenticationType: String, secondFactor: String, connectors: [TeleportConnector]) {
+    public init(clusterName: String, serverVersion: String, authenticationType: String, secondFactor: String, connectors: [TeleportConnector], webAuthnConfigured: Bool = false) {
         self.clusterName = clusterName; self.serverVersion = serverVersion
         self.authenticationType = authenticationType; self.secondFactor = secondFactor; self.connectors = connectors
+        self.webAuthnConfigured = webAuthnConfigured
     }
 }
 

@@ -32,6 +32,17 @@ Share one client per proxy/account profile across tabs and nodes. The default
 store is memory only. The app supplies durable, atomic secure storage and browser
 presentation. Credentials must not enter cloud configuration sync.
 
+Local users can approve a password login with an existing passkey or security key
+in the system browser:
+
+```swift
+try await client.login(username: username, password: password, browser: myBrowserPresenter)
+```
+
+This is separate from browser SSO. The server must permit browser MFA.
+Real-server browser MFA and physical-key validation are pending; see
+[the authentication contract](docs/AUTHENTICATION.md) and test limits below.
+
 Read [the integration contract](docs/INTEGRATION.md),
 [the tested scope](docs/COMPATIBILITY.md), and
 [the SSH engine requirements](docs/SSH-ENGINE.md).

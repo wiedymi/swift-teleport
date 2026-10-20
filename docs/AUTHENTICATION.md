@@ -17,14 +17,61 @@ The client uses these versioned public routes:
 
 Public key bytes use JSON base64. The requested lifetime uses nanoseconds.
 The client uses one RSA 3072 private key for the issued SSH and TLS credentials.
-This reduces key storage and lets both authentication paths use one key. Other client key algorithms need separate checks.
+This reduces key storage and lets all authentication paths use one key. Other client key algorithms need separate checks.
 
-The client accepts TOTP only when the server offers it. A hardware key challenge
-returns a typed unsupported-policy error. Passwords and TOTP codes are not
-stored or logged.
+The client accepts TOTP only when the server offers it. This password/TOTP API
+does not open a browser. A WebAuthn-only challenge returns the typed `hardwareKey`
+error. Use the separate browser MFA API below for that approval. Passwords and
+TOTP codes are not stored or logged.
 
-Concurrent callers share one login. Canceling one caller leaves the login active
+Concurrent callers for the same account and authentication method share one login.
+Password/TOTP, local browser MFA, and each SSO connector are separate enum cases;
+one method cannot join another pending method. Canceling one caller leaves the login active
 for other callers. When no caller remains, the client cancels the login.
+
+## Local browser MFA
+
+`login(username:password:browser:ttl:)` uses a local account password and an
+**existing** passkey or security key through the system browser. This is separate
+from GitHub/OIDC/SAML SSO and is not passwordless login.
+
+1. Discover and validate the root cluster and policy through verified HTTPS.
+2. Start the same authenticated loopback listener used by SSO.
+3. Send `user`, `pass`, and `browser_mfa_tsh_redirect_url` to
+   `/v1/webapi/mfa/login/begin`.
+4. Require `browser_challenge.requestId` and open the same proxy origin at
+   `/web/mfa/browser/<requestId>` through `TeleportBrowserPresenter`.
+5. The user signs into the matching Teleport web account and approves with an
+   existing WebAuthn credential. The server authenticates the account, request,
+   browser session, challenge, origin, and credential signature.
+6. Authenticate and decrypt the loopback callback. Its
+   `browser_mfa_webauthn_response` contains an assertion, **not certificates**.
+7. Create the existing RSA key and send `browser_response` with the original
+   `requestId` and `webauthnResponse` to `/v1/webapi/mfa/login/finish`, together
+   with `user`, `password`, both public keys, an empty `totp_code`, and `ttl`.
+8. Load public user CAs through verified HTTPS and apply the existing account,
+   root cluster, private key, SSH/TLS certificate, signature, and validity checks.
+   Only then can the shared login operation atomically store the identity.
+
+The server must permit browser MFA (`allow_cli_auth_via_browser`) and the account
+must have an existing WebAuthn device. An absent browser challenge returns
+`unsupportedPolicy(.browserMFA)` without a fallback. Malformed challenges,
+assertions, and certificate responses fail without replacing an identity.
+`discovery.webAuthnConfigured` only reports a configured RP ID. It is a UI hint;
+discovery does not report browser MFA permission. The begin response is authoritative.
+
+The shared listener enforces its existing one-attempt AES-GCM protocol, HTTP
+limits, cancellation, and 180-second timeout. An invalid unauthenticated callback
+does not consume the attempt. An authenticated but invalid assertion ends it.
+Assertion byte fields use bounded URL-safe base64: credential ID 1 KiB, client
+data 16 KiB, authenticator data 64 KiB, signature 16 KiB, and user handle 64 bytes.
+These are client resource limits; the server verifies WebAuthn cryptography.
+Keys are created after approval to avoid key work for disabled or canceled MFA.
+No password, key, callback secret, or authentication response is logged.
+
+Device registration, native Apple passkeys, custom Secure Enclave credentials,
+PIV signing, Device Trust, headless login, and access requests are outside this API.
+See [validation limits](VALIDATION.md) before making a real-server or device claim.
 
 ## Identity and storage
 
@@ -57,7 +104,7 @@ SSH sessions and connection objects. It must then stop all SSH operations before
 it closes transferred descriptors. Local sign-out does not revoke certificates
 on other clients.
 
-## Browser login
+## Browser SSO
 
 The presenter opens an HTTPS authorization URL. It returns after the browser
 opens. The library receives the final response on a temporary listener bound to
@@ -114,7 +161,7 @@ after the initial cluster response. It does not carry Auth RPCs.
 
 ## Unsupported requirements
 
-The client rejects FIPS mode, hardware-key policies, automatic Device Trust
+The client rejects FIPS mode, hardware-backed SSH private-key policies, automatic Device Trust
 enrollment, and a required message-of-the-day banner. The library has no banner
 display and acknowledgement adapter. It must not silently skip this requirement.
 Passwordless, headless, per-session MFA, access requests, leaf clusters, legacy

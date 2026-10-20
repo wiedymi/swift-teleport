@@ -6,9 +6,14 @@ public actor TeleportClient {
     public let proxy: TeleportProxy
     private let identityStore: any TeleportIdentityStore
     private let transport = ProxyTransport()
+    enum LoginMethod: Equatable, Sendable {
+        case password(String)
+        case browserMFA(String)
+        case sso(TeleportConnector.Kind, String)
+    }
     private enum Operation {
         case idle(UUID)
-        case login(account: String, id: UUID, task: Task<TeleportIdentity, any Error>)
+        case login(method: LoginMethod, id: UUID, task: Task<TeleportIdentity, any Error>)
         case signOut(id: UUID, task: Task<Void, any Error>)
 
         var id: UUID {
@@ -39,8 +44,17 @@ public actor TeleportClient {
         guard !username.isEmpty, username.utf8.count <= 1024, !password.isEmpty, password.utf8.count <= 65_536,
               otp.isEmpty || ((6...8).contains(otp.utf8.count) && otp.utf8.allSatisfy({ (48...57).contains($0) })),
               ttl.isFinite, ttl >= 60, ttl <= 43_200 else { throw TeleportError.invalidConfiguration("login input") }
-        return try await sharedLogin(account: username) { [proxy] in
+        return try await sharedLogin(method: .password(username)) { [proxy] in
             try await Self.localLogin(proxy: proxy, username: username, password: password, otp: otp, ttl: ttl)
+        }
+    }
+
+    /// Approve local password login with an existing passkey or security key in the browser.
+    public func login(username: String, password: String, browser: any TeleportBrowserPresenter, ttl: TimeInterval = 3600) async throws -> TeleportIdentity {
+        guard !username.isEmpty, username.utf8.count <= 1024, !password.isEmpty, password.utf8.count <= 65_536,
+              ttl.isFinite, ttl >= 60, ttl <= 43_200 else { throw TeleportError.invalidConfiguration("login input") }
+        return try await sharedLogin(method: .browserMFA(username)) { [proxy] in
+            try await BrowserMFALogin.perform(proxy: proxy, username: username, password: password, ttl: ttl, presenter: browser)
         }
     }
 
@@ -50,18 +64,18 @@ public actor TeleportClient {
         guard !connector.id.isEmpty, connector.id.utf8.count <= 256,
               connector.id.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 || $0 == 46 }),
               ttl.isFinite, ttl >= 60, ttl <= 43_200 else { throw TeleportError.invalidConfiguration("browser login input") }
-        return try await sharedLogin(account: "browser:" + connector.kind.rawValue + ":" + connector.id) { [proxy] in
+        return try await sharedLogin(method: .sso(connector.kind, connector.id)) { [proxy] in
             try await BrowserLogin.perform(proxy: proxy, connector: connector, ttl: ttl, presenter: browser)
         }
     }
 
-    private func sharedLogin(account: String, operation: @escaping @Sendable () async throws -> TeleportIdentity) async throws -> TeleportIdentity {
+    func sharedLogin(method: LoginMethod, operation: @escaping @Sendable () async throws -> TeleportIdentity) async throws -> TeleportIdentity {
         guard loginWaiters < 64 else { throw TeleportError.limitExceeded("login waiters") }
         let task: Task<TeleportIdentity, any Error>
         switch self.operation {
         case .signOut: throw TeleportError.invalidConfiguration("sign-out is active")
-        case .login(let pendingAccount, _, let pendingTask):
-            guard pendingAccount == account else { throw TeleportError.invalidConfiguration("a different account login is active") }
+        case .login(let pendingMethod, _, let pendingTask):
+            guard pendingMethod == method else { throw TeleportError.invalidConfiguration("a different login is active") }
             task = pendingTask
         case .idle:
             let id = UUID(), store = identityStore
@@ -77,7 +91,7 @@ public actor TeleportClient {
                     throw error
                 }
             }
-            self.operation = .login(account: account, id: id, task: task)
+            self.operation = .login(method: method, id: id, task: task)
         }
         loginWaiters += 1
         defer {

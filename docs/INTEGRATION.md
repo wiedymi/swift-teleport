@@ -61,6 +61,25 @@ does not substitute an app URL scheme. A sandboxed Mac app must allow the local
 listener. iOS background/foreground and device behavior need the checks listed in
 [COMPATIBILITY.md](COMPATIBILITY.md).
 
+Use the same presenter for either explicit login method:
+
+```swift
+// Local account, approved with an existing passkey or security key in the browser.
+let identity = try await client.login(username: username, password: password, browser: presenter)
+// Or browser SSO through an advertised GitHub/OIDC/SAML connector.
+let ssoIdentity = try await client.login(browser: presenter, connector: connector)
+```
+
+The presenter returns after it opens the URL. Keep it and the login task alive
+until completion. Cancel the task when its last UI owner leaves, and close the
+browser session when login completes or fails. One canceled waiter does not
+cancel another waiter's login. Do not log browser URLs or callback data.
+
+For local accounts, `discover().webAuthnConfigured` can show a browser MFA action.
+It does not prove permission. Handle `unsupportedPolicy(.browserMFA)` if the
+begin response has no browser challenge. This API still needs a password; it
+does not register a credential. Password/TOTP remains a separate API.
+
 UI, Keychain names, biometric policy, profile forms, navigation, and cloud sync
 belong to the app. Unsupported server policies return typed errors.
 
