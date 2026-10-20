@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Check safe startup diagnostics
+        run: PYTHONDONTWRITEBYTECODE=1 python3 IntegrationTests/Scripts/test_lab.py
       - name: Set explicit loopback DNS for this disposable runner
         run: printf '\n127.0.0.1 teleport.localhost\n' | sudo tee -a /etc/hosts
       - name: Run the real Community server control suite

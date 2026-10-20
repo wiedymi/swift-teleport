@@ -84,6 +84,8 @@ The 18.11.4 image was obtained from the registry and reports `Teleport v18.11.4 
 
 A run's small `report.json` contains only the server version, platform, and named infrastructure checks. The controller does not print raw enrollment errors, credentials, administrative output, or server logs. Keep any result summary you need before teardown. Server state and raw logs must not become build artifacts.
 
+If initial Auth readiness fails before any user or node token is created, the controller reports only container status, numeric bind ownership and modes, and a fixed permission-failure classification. It never prints the server log text.
+
 The lab is one reusable server fixture. A consuming app can use its manifest at a selected package revision. Keep the server fixture here rather than duplicating the Compose stack. Native functional, fault, performance, and device checks belong to the consuming app; the server control suite does not replace them.
 
 The native SSH harness requires a compatible external upstream libssh2 build.

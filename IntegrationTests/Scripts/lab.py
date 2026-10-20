@@ -135,6 +135,35 @@ class Lab:
         except (ValueError, AttributeError):
             return False
 
+    def diagnose_initial_auth_failure(self):
+        """Report only safe facts before any user or node token is provisioned."""
+        try:
+            container = self.compose('ps', '--all', '--quiet', 'auth-proxy', check=False, timeout=10).stdout.strip()
+            if re.fullmatch(rb'[a-f0-9]{12,64}', container):
+                state = execute(['docker', 'inspect', '--format',
+                                 '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.Config.User}}',
+                                 container.decode()], env=self.env, check=False, timeout=10).stdout.split()
+                if len(state) in (3, 4) and state[0] in (b'created', b'running', b'paused', b'restarting', b'removing', b'exited', b'dead'):
+                    status = state[0].decode()
+                    exit_code = state[1].decode() if re.fullmatch(rb'[0-9]{1,3}', state[1]) else 'unknown'
+                    oom = state[2].decode() if state[2] in (b'true', b'false') else 'unknown'
+                    user = 'root' if len(state) == 3 else (state[3].decode() if re.fullmatch(rb'[0-9:]{1,24}', state[3]) else 'named-user')
+                    log('Initial Auth state: status=' + status + ' exit=' + exit_code + ' oom=' + oom + ' user=' + user)
+            for name, relative in (('config', 'config/auth-proxy.json'), ('HTTPS key', 'pki/proxy.key'), ('admin export', 'admin-export')):
+                info = (self.path / relative).stat()
+                log('Initial Auth bind ' + name + ': uid=' + str(info.st_uid) + ' gid=' + str(info.st_gid) + ' mode=' + oct(info.st_mode & 0o777))
+            output = self.compose('logs', '--no-color', '--tail', '20', 'auth-proxy', check=False, timeout=10).stdout.lower()
+            # Never expose raw server output, paths from an error, or error values.
+            denied = b'permission denied' in output or b'operation not permitted' in output
+            log('Initial Auth filesystem access denied: ' + str(denied).lower())
+            if denied:
+                for path in (b'/etc/teleport/teleport.yaml', b'/run/pki/proxy.key', b'/run/admin-export'):
+                    if path in output:
+                        log('Initial Auth access check named: ' + path.decode())
+        except Exception:
+            # A diagnostic must never replace the original readiness failure.
+            log('Initial Auth safe diagnostic is unavailable.')
+
     def ping(self):
         context = ssl.create_default_context(cafile=str(self.path / 'client' / 'https-ca.pem'))
         # Explicit empty proxy map keeps test traffic out of any inherited HTTP proxy.
@@ -312,7 +341,11 @@ def create(host, enroll):
                 config = json.loads(config_path.read_text())
                 config['teleport']['proxy_server'] = host + ':' + str(port)
                 write_json(config_path, config)
-        lab.wait(lambda: lab.ready('auth-proxy'), 'Auth/Proxy process readiness')
+        try:
+            lab.wait(lambda: lab.ready('auth-proxy'), 'Auth/Proxy process readiness')
+        except LabError:
+            lab.diagnose_initial_auth_failure()
+            raise
         lab.wait(lab.ping, 'Verified discovery')
         lab.auth('create', '/run/roles.yaml')
         invitation = lab.auth('users', 'add', 'e2e-user', '--roles=e2e-client', '--logins=teleport-test', '--ttl=15m').stdout.decode()
