@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import lab
+import browser_mfa
 
 
 class InitialAuthDiagnosticTests(unittest.TestCase):
@@ -58,6 +59,27 @@ class InitialAuthDiagnosticTests(unittest.TestCase):
             self.lab.diagnose_initial_auth_failure()
         self.assertIn('diagnostic is unavailable', captured.getvalue())
         self.assertNotIn(secret, captured.getvalue())
+
+
+class BrowserMFARelayTests(unittest.TestCase):
+    def test_callback_stays_on_exact_loopback_callback_target(self):
+        value = 'http://127.0.0.1:12345/callback?response=authenticated-test-data'
+        self.assertEqual(browser_mfa.callback_url(value), value)
+        for invalid in (
+                'http://localhost:12345/callback?response=x',
+                'http://127.0.0.1/callback?response=x',
+                'http://127.0.0.1:12345/other?response=x',
+                'http://user@127.0.0.1:12345/callback?response=x',
+                'http://127.0.0.1:12345/callback?response=x&response=y',
+                'http://127.0.0.1:12345/callback?response=x&secret_key=y',
+                'https://127.0.0.1:12345/callback?response=x',
+                'http://127.0.0.1:12345/callback?response=x#fragment'):
+            with self.subTest(value=invalid), self.assertRaises(lab.LabError):
+                browser_mfa.callback_url(invalid)
+
+    def test_callback_input_size_is_bounded(self):
+        with self.assertRaises(lab.LabError):
+            browser_mfa.callback_url('x' * 1_000_001)
 
 
 if __name__ == '__main__':

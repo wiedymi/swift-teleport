@@ -9,6 +9,6 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources && \
 WORKDIR /opt/enrollment
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
-COPY enroll.mjs ./
+COPY enroll.mjs browser-mfa.mjs webauthn.mjs ./
 ENV HOME=/tmp/browser
 ENTRYPOINT ["node", "/opt/enrollment/enroll.mjs"]

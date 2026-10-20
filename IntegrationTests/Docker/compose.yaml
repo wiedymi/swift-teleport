@@ -92,6 +92,7 @@ services:
         DEBIAN_SNAPSHOT: ${DEBIAN_SNAPSHOT:?}
     environment:
       PROXY_URL: https://${PROXY_HOST:?}:${PROXY_PORT:?}
+      BROWSER_MFA: ${BROWSER_MFA:-false}
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     cpus: 1
@@ -103,6 +104,26 @@ services:
       - ${RUN_DIR:?}/pki/https-ca.pem:/run/https-ca.pem:ro
       - ${RUN_DIR:?}/enrollment:/run/enrollment:ro
       - ${RUN_DIR:?}/client:/run/client
+      - ${RUN_DIR:?}/browser-mfa:/run/browser-mfa
+    networks: [lab]
+    logging:
+      driver: none
+  browser-mfa:
+    profiles: [browser-mfa]
+    image: ${ENROLLMENT_IMAGE:?}
+    entrypoint: [node, /opt/enrollment/browser-mfa.mjs]
+    environment:
+      PROXY_URL: https://${PROXY_HOST:?}:${PROXY_PORT:?}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 768m
+    pids_limit: 256
+    shm_size: 128m
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=256m"]
+    volumes:
+      - ${RUN_DIR:?}/pki/https-ca.pem:/run/https-ca.pem:ro
+      - ${RUN_DIR:?}/browser-mfa:/run/browser-mfa
     networks: [lab]
     logging:
       driver: none

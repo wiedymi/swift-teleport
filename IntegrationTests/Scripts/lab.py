@@ -179,7 +179,8 @@ class Lab:
         if proxy.get('tls_routing_enabled') is not True:
             raise LabError('The running proxy did not enable TLS multiplexing.')
         auth = ping.get('auth', {})
-        if auth.get('type') != 'local' or auth.get('second_factor') != 'otp':
+        expected_factor = 'on' if self.env.get('BROWSER_MFA') == 'true' else 'otp'
+        if auth.get('type') != 'local' or auth.get('second_factor') != expected_factor:
             raise LabError('The running cluster authentication policy does not match the fixture.')
         return ping
 
@@ -269,7 +270,7 @@ def pick_port():
     raise LabError('No free proxy port in the bounded range 18443–18543.')
 
 
-def create(host, enroll):
+def create(host, enroll, browser_mfa=False):
     if not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?', host):
         raise LabError('Invalid proxy hostname.')
     _, arch = preflight(host)
@@ -277,7 +278,7 @@ def create(host, enroll):
     path = RUNS / ('teleport-e2e-' + uuid.uuid4().hex[:12])
     path.mkdir(mode=0o700)
     try:
-        for name in ('pki', 'config', 'tokens', 'admin-export', 'client', 'enrollment'):
+        for name in ('pki', 'config', 'tokens', 'admin-export', 'client', 'enrollment', 'browser-mfa'):
             (path / name).mkdir(mode=0o700)
         now = dt.datetime.now(dt.timezone.utc)
         port = pick_port()
@@ -287,7 +288,8 @@ def create(host, enroll):
         env = {'RUN_DIR': str(path), 'PROXY_HOST': host, 'PROXY_PORT': str(port),
                'TELEPORT_IMAGE': teleport_image, 'DEBIAN_IMAGE': LOCK['debian']['image'],
                'DEBIAN_SNAPSHOT': LOCK['debian']['snapshot'], 'NODE_IMAGE': 'teleport-e2e-node:' + LOCK['teleport']['version'],
-               'ENROLLMENT_IMAGE': 'teleport-e2e-enrollment:' + LOCK['playwrightCore']}
+               'ENROLLMENT_IMAGE': 'teleport-e2e-enrollment:' + LOCK['playwrightCore'],
+               'BROWSER_MFA': 'true' if browser_mfa else 'false'}
         for key in ('DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'):
             if key in os.environ:
                 env[key] = os.environ[key]
@@ -305,6 +307,10 @@ def create(host, enroll):
                 'auth_service': {'enabled': True, 'cluster_name': cluster, 'proxy_listener_mode': 'multiplex', 'session_recording': 'node', 'authentication': {'type': 'local', 'second_factor': 'otp'}},
                 'proxy_service': {'enabled': True, 'web_listen_addr': '0.0.0.0:' + str(port), 'public_addr': host + ':' + str(port), 'proxy_protocol': 'off', 'https_keypairs': [{'key_file': '/run/pki/proxy.key', 'cert_file': '/run/pki/proxy.pem'}]},
                 'ssh_service': {'enabled': False}}
+        if browser_mfa:
+            auth['auth_service']['authentication'].update({
+                'second_factor': 'on', 'webauthn': {'rp_id': host},
+                'allow_cli_auth_via_browser': True})
         write_json(path / 'config' / 'auth-proxy.json', auth)
         for node in NODES:
             config = {'version': 'v3', 'teleport': {'nodename': node, 'data_dir': '/var/lib/teleport', 'proxy_server': host + ':' + str(port), 'auth_token': '/run/join-token', 'log': {'severity': 'ERROR'}},
@@ -365,7 +371,7 @@ def create(host, enroll):
         resources = lab.wait(lab.node_resources, 'Expected registered nodes')
         if enroll:
             log('Completing real browser password/TOTP enrollment with trusted HTTPS.')
-            result = lab.compose('run', '--rm', '--no-deps', 'enrollment', timeout=90, check=False)
+            result = lab.compose('run', '--rm', '--no-deps', 'enrollment', timeout=180 if browser_mfa else 90, check=False)
             if result.returncode:
                 log(result.stderr.decode(errors='replace')[-2000:])
                 raise LabError('Local browser enrollment failed.')
@@ -377,14 +383,17 @@ def create(host, enroll):
                     'serverVersion': LOCK['teleport']['version'], 'httpsCAFile': str(path / 'client' / 'https-ca.pem'),
                     'identityFile': str(path / 'client' / 'identity'),
                     'nodes': [{'name': name, 'id': resources[name], 'authorized': name != 'node-denied'} for name in NODES],
-                    'policy': {'authentication': 'local', 'secondFactor': 'otp', 'tlsRouting': True}}
+                    'policy': {'authentication': 'local', 'secondFactor': 'on' if browser_mfa else 'otp', 'tlsRouting': True}}
+        if browser_mfa:
+            manifest['browserMFA'] = True
         if enroll:
             manifest['localCredentialsFile'] = str(path / 'client' / 'local-credentials.json')
         write_json(path / 'client' / 'fixture.json', manifest)
         version_output = lab.compose('exec', '-T', 'auth-proxy', '/usr/local/bin/teleport', 'version').stdout.decode().strip()
         write_json(path / 'report.json', {'schemaVersion': 1, 'runID': path.name, 'platform': 'linux/' + arch,
                    'serverVersion': LOCK['teleport']['version'], 'infrastructureControl': checks,
-                   'localEnrollment': enroll, 'teleportVersionOutput': version_output})
+                   'localEnrollment': enroll, 'browserMFAEnrollment': browser_mfa,
+                   'teleportVersionOutput': version_output})
         for file in path.rglob('*'):
             if file.is_file():
                 file.chmod(0o600)
@@ -403,6 +412,7 @@ def main():
     parser.add_argument('--run-id')
     parser.add_argument('--host', default='teleport.localhost')
     parser.add_argument('--without-enrollment', action='store_true', help='Transport-only fixture; report explicitly excludes local login.')
+    parser.add_argument('--browser-mfa', action='store_true', help='Enable browser MFA and register a disposable virtual WebAuthn credential.')
     args = parser.parse_args()
     os.umask(0o077)
     if args.operation == 'preflight':
@@ -410,7 +420,9 @@ def main():
         print(json.dumps({'dockerPlatform': 'linux/' + arch, 'ready': True}))
         return
     if args.operation == 'up':
-        lab = create(args.host, not args.without_enrollment)
+        if args.browser_mfa and args.without_enrollment:
+            raise LabError('Browser MFA requires enrollment.')
+        lab = create(args.host, not args.without_enrollment, args.browser_mfa)
         print(lab.path / 'client' / 'fixture.json')
         return
     if args.operation == 'clean-stale':

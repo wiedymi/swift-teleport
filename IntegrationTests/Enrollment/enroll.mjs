@@ -1,39 +1,15 @@
-import { chromium } from 'playwright-core';
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { createHmac, randomBytes } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-
-function otp(seed) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = '';
-  for (const char of seed.toUpperCase().replace(/=+$/, '')) {
-    const n = alphabet.indexOf(char);
-    if (n < 0) throw new Error('Invalid TOTP seed');
-    bits += n.toString(2).padStart(5, '0');
-  }
-  const key = Buffer.from((bits.match(/.{8}/g) ?? []).map(x => parseInt(x, 2)));
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
-  const hash = createHmac('sha1', key).update(counter).digest();
-  const n = hash.readUInt32BE(hash[hash.length - 1] & 15) & 0x7fffffff;
-  return String(n % 1000000).padStart(6, '0');
-}
+import { randomBytes } from 'node:crypto';
+import { launchBrowser, otp, registerCredential } from './webauthn.mjs';
 
 let browser;
 let stage = 'HTTPS trust';
 try {
-  const trust = `${process.env.HOME}/.pki/nssdb`;
-  mkdirSync(trust, { recursive: true, mode: 0o700 });
-  execFileSync('certutil', ['-N', '--empty-password', '-d', `sql:${trust}`], { stdio: 'ignore' });
-  execFileSync('certutil', ['-A', '-d', `sql:${trust}`, '-n', 'teleport-e2e', '-t', 'C,,', '-i', '/run/https-ca.pem'], { stdio: 'ignore' });
   const invitation = JSON.parse(readFileSync('/run/enrollment/invitation.json', 'utf8'));
   const password = randomBytes(24).toString('base64url');
   stage = 'browser startup';
-  const proxyAddress = await lookup('auth-proxy', { family: 4 });
-  const proxyHost = new URL(process.env.PROXY_URL).hostname;
-  browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true,
-    args: ['--no-sandbox', `--host-resolver-rules=MAP ${proxyHost} ${proxyAddress.address}`] });
+  browser = await launchBrowser();
   const page = await browser.newPage();
   stage = 'verified proxy page';
   await page.goto(process.env.PROXY_URL + '/web/login', { waitUntil: 'networkidle', timeout: 30000 });
@@ -62,6 +38,12 @@ try {
     });
     if (!result.ok) throw new Error(`Password enrollment failed (${result.status})`);
   }, { token: invitation.token, password: Buffer.from(password).toString('base64'), second_factor_token: code, deviceName: 'e2e-totp' });
+  if (process.env.BROWSER_MFA === 'true') {
+    stage = 'virtual WebAuthn registration';
+    const credentials = { username: invitation.username, password, totpSeed: seed };
+    const credential = await registerCredential(page, credentials);
+    writeFileSync('/run/browser-mfa/credentials.json', JSON.stringify({ ...credentials, credential }) + '\n', { mode: 0o600 });
+  }
   await browser.close();
   browser = undefined;
   // Keep the enrollment code out of the native client's first OTP attempt.

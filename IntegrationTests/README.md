@@ -38,6 +38,46 @@ The test wrapper always removes its lab:
 
 The native command receives `TELEPORT_E2E_FIXTURE` and `TELEPORT_E2E_SUITE`. It must fail if a required test cannot run. The wrapper fails when a native suite has no native command. The infrastructure suite is server-fixture coverage. It is not native Swift client coverage.
 
+### Optional browser MFA check
+
+The default lab keeps its password/TOTP policy. `up --browser-mfa` instead enables
+TOTP and WebAuthn, sets the test hostname as the WebAuthn RP ID, and permits CLI
+browser approval. Test provisioning uses the enrolled user's TOTP to register
+one virtual USB security key through the browser's WebAuthn API and the server's
+normal device APIs. The library does not register devices.
+
+Run the public Swift API test from this repository on macOS:
+
+```sh
+./IntegrationTests/Scripts/test-e2e.sh --suite browser-mfa -- swift test --filter BrowserMFALiveTests
+```
+
+The wrapper removes the lab after the command ends. For a lab kept for inspection,
+use `lab.sh up --browser-mfa`, set `TELEPORT_BROWSER_MFA_FIXTURE` to its printed
+fixture path, and run the same Swift test. Then remove that run with `lab.sh down`.
+Without this environment variable, the live test reports a skip.
+
+The test first requests certificates with password/TOTP. It then uses two shared
+browser MFA callers, checks their issued SSH and TLS identity, reads the stored
+identity, and signs out. Browser MFA is local WebAuthn authentication; it does
+not use the GitHub, OIDC, or SAML browser SSO routes.
+
+Chromium uses a disposable virtual authenticator through its test interface.
+It calls the real HTTPS and WebAuthn APIs; it does not test the visual web forms,
+a physical key, an Apple passkey, or system browser presentation. The browser
+container cannot reach the Mac's `127.0.0.1`. A test-only relay therefore carries
+the encrypted callback URL through private files to the Mac listener. It permits
+only the loopback callback target, does not follow redirects, and leaves callback
+authentication to the library. The browser has only its test credential files and
+public HTTPS CA. These files are deleted with the lab and must not be uploaded.
+
+This new mode has **not run against the pinned server**. On 20 October 2026, the
+exact image pull made no layer progress for five minutes and was stopped. The
+latest Linux CI run also failed before server startup with an ECR data-limit
+error. No image tag or server version was substituted. Syntax and unit checks of
+the tools do not establish real browser MFA support. Real-provider SSO remains
+outside this lab.
+
 The proxy binds only `127.0.0.1`. The macOS and iOS Simulator clients use this same fixture and receive its public HTTPS CA through `TeleportProxy`. No system trust change is needed. Physical device tests need a separate reachable test environment and are outside this local run.
 
 The [Apple test app](../Examples/AppleSmoke/README.md) has the exact-domain ATS setting that Apple requires for URLSession manual private-CA trust. It applies only to `teleport.localhost`; the package still validates HTTPS, CA, hostname, and certificate dates. Public CA proxies do not need it. See Apple's [manual trust documentation](https://developer.apple.com/documentation/Foundation/performing-manual-server-trust-authentication).
@@ -57,14 +97,15 @@ The [Apple test app](../Examples/AppleSmoke/README.md) has the exact-domain ATS 
 | `localCredentialsFile` | Restricted username, fresh password, and TOTP seed file path; present only after enrollment |
 | `nodes` | Node name, actual resource ID, and expected authorization |
 | `policy` | Expected local authentication, TOTP, and TLS routing policy |
+| `browserMFA` | `true` only for the optional WebAuthn fixture |
 
-Only the `client` directory belongs in the native harness's inputs. It contains private user material and must stay private. It has no server signing keys, invitation tokens, administrative identity, or server state. Do not upload it as a CI artifact.
+Only the `client` directory belongs in the native SSH harness's inputs. The optional browser MFA test also uses the lab-owned browser helper directory. Both contain private user material and must stay private. Neither has server signing keys, an administrative identity, or server state. Do not upload them as CI artifacts.
 
 The full identity export keeps all user key/certificate bindings together. Its private key algorithm is the server default; it is not a fixed RSA fixture. A native login suite must ignore that file, read only the local credentials and public HTTPS CA, and obtain fresh certificates through the package.
 
 ## Checks and bounds
 
-Readiness requires `teleport debug readyz`, verified HTTPS discovery, the locked server patch, local/TOTP policy, TLS multiplexing, and all three registered node IDs. The selected 18.11.4 binary returns `ready (PID:...)` from the debug command. A running container alone is insufficient.
+Readiness requires `teleport debug readyz`, verified HTTPS discovery, the locked server patch, the selected local MFA policy, TLS multiplexing, and all three registered node IDs. The selected 18.11.4 binary returns `ready (PID:...)` from the debug command. A running container alone is insufficient.
 
 The official-client control checks exact successful command stdout and stderr on A and B, remote exit status 23, a real Unix PTY with exact `37 91` size output, a tmux session, server authorization denial with no marker on the denied node, no direct TCP 3022 listener, failed direct connections from the node network, and failed access while node A is stopped. It restarts node A and waits for readiness before returning the fixture. The PTY control changes size inside the remote shell; the native client suite must test the SSH resize request separately.
 
@@ -96,7 +137,7 @@ does not download or build that engine.
 
 On 20 October 2026, two independent full runs completed real browser enrollment and the infrastructure control checks on Apple M5 Max hardware, macOS 27.2, and a native arm64 Colima 0.10.3 VM (4 CPUs, 4 GiB RAM). Docker Engine was 29.5.2 and Compose was 5.6.0. A separate PTY/tmux check passed with the four listed node capabilities. One full run was removed twice; its local secrets and all of its Docker containers, volumes, and networks were absent after teardown.
 
-The default test wrapper also runs this same control suite and removes its own run. The Linux workflow is provided but has not been executed remotely. AMD64 registry manifests were checked; AMD64 execution and physical devices have not been tested in this local validation. These results establish the server fixture only. Native Swift results are recorded separately.
+The default test wrapper also runs this same control suite and removes its own run. Recent Linux workflow attempts failed before server startup because ECR denied the pinned image pull. AMD64 registry manifests were checked; AMD64 execution and physical devices have not been tested in this local validation. These results establish the server fixture only. Native Swift results are recorded separately.
 
 A new full run also passed on OrbStack 2.2.4 with Docker Engine 29.8.2, using the same locked images. It completed real browser enrollment and all eight infrastructure checks. A separate OpenSSL probe used the native login identity to complete verified Auth mTLS with SNI `teleport.cluster.local` and negotiated `h2`. The earlier task Colima VM, its disk, and its test runs were removed when the runtime changed to OrbStack.
 

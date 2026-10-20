@@ -2,6 +2,53 @@
 
 Date: 20 October 2026. These are local checks.
 
+## Local browser MFA change
+
+The new path was checked against the pinned source protocol before code changes.
+Local browser MFA returns a WebAuthn assertion and then requests certificates;
+GitHub/OIDC/SAML SSO returns certificates in its callback. Only their authenticated
+loopback transport is shared.
+
+Current checks:
+
+- `swift test`: 44 passed, one live test skipped. All 33 prior tests passed,
+  including password/TOTP request fields, SSO callback authentication and tamper
+  rejection, certificate validation, and transport checks.
+- Eleven new focused tests cover discovery hints, missing/invalid challenges,
+  invalid assertions, invalid callbacks followed by a valid callback, cancellation,
+  timeout, input bounds, separate pending authentication methods, shared waiter
+  cancellation, failed storage, and account/root/SSH/TLS key binding.
+- Three of those tests use a mock certificate endpoint that signs the actual new
+  native public keys. They ran on macOS using an existing OpenSSL 3 installation.
+  They skip if that test tool is absent; no new dependency is installed.
+- `swift build -c release`: passed.
+- `xcodebuild -scheme swift-teleport -destination 'generic/platform=iOS'
+  -configuration Release CODE_SIGNING_ALLOWED=NO build`: passed in default Derived Data.
+- Five Python lab checks, three JavaScript syntax checks, shell syntax, optional
+  reference checks, and diff checks passed.
+
+The real-server attempt used the exact pinned Teleport 18.11.4 image. The pull
+made no layer progress for five minutes and was stopped. No alternate image was
+used. No container or credential was created. The new browser MFA lab and its
+password/TOTP regression step have not run against the server. Historical
+password/TOTP results below are not a rerun for this change.
+
+The optional live test provisions a virtual WebAuthn key through test tools, then
+calls the public library API. Its private file relay carries the encrypted callback
+from container Chromium to the native loopback listener. It does not prove visual
+forms, system browser presentation, physical keys/passkeys, Apple device lifecycle,
+or sandboxed Mac callbacks. Real GitHub/OIDC/SAML provider validation is still
+missing. See [the lab commands](../IntegrationTests/README.md).
+
+Material choices: keep separate local MFA and SSO response types; reuse the
+existing callback cryptography and certificate checks; let Teleport verify
+WebAuthn signatures and request/account scope; create keys after approval; expose
+the configured RP only as a UI hint; reject browser MFA when the server does not
+offer it. No production dependency or registration API was added. Assertion
+resource limits are listed in [AUTHENTICATION.md](AUTHENTICATION.md).
+
+## Earlier checks
+
 The records below distinguish package tests, SSH engine tests, server controls,
 and native app tests. A server control result is not a Swift client result.
 SSH results below used a temporary libssh2 1.11.1 build with local changes.
