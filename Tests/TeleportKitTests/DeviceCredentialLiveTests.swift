@@ -22,8 +22,9 @@ final class DeviceCredentialLiveTests: XCTestCase, @unchecked Sendable {
         let password = Self.password(invitation: invitation)
         let store = LiveDeviceCredentialStore()
         let identityStore = MemoryIdentityStore()
+        let keys = LiveSoftwareKeyOperations()
         let client = TeleportClient(proxy: proxy, identityStore: identityStore,
-                                    deviceCredentialStorage: store, deviceKeyOperations: LiveSoftwareKeyOperations())
+                                    deviceCredentialStorage: store, deviceKeyOperations: keys)
         let discovery = try await client.discover()
         XCTAssertEqual(discovery.serverVersion, fixture.serverVersion)
         XCTAssertEqual(discovery.clusterName, fixture.clusterName)
@@ -69,6 +70,59 @@ final class DeviceCredentialLiveTests: XCTestCase, @unchecked Sendable {
         }
         let retained = try await client.identity()
         XCTAssertTrue(retained.tlsCertificateDER == identity.tlsCertificateDER)
+
+        // TOTP isolates resident registration and passwordless certificate issue from browser setup.
+        try await Self.nextOTPPeriod()
+        let transport = ProxyTransport()
+        try await DeviceCredentialAuthentication.register(
+            proxy: proxy, identity: retained, name: "test-passwordless-key", otp: Self.totp(seed), presenter: nil,
+            prompt: "Register test passwordless key", store: store, keys: keys, usage: .passwordless
+        ) { path, message in
+            try await transport.unary(path: path, message: message, identity: retained)
+        }
+        let resident = await store.load(username: invitation.username)
+        let passwordlessCredential = try XCTUnwrap(resident)
+        XCTAssertEqual(passwordlessCredential.clusterName, fixture.clusterName)
+        XCTAssertFalse(passwordlessCredential.credentialID.isEmpty)
+        let userHandle = try XCTUnwrap(passwordlessCredential.userHandle)
+        XCTAssertTrue((1...64).contains(userHandle.count))
+        XCTAssertTrue(passwordlessCredential.protectedKey != credential.protectedKey)
+        try await client.signOut()
+
+        let passwordless = try await client.loginWithSecureEnclave(username: invitation.username, prompt: "Test passwordless login")
+        XCTAssertTrue(passwordless.isUsable())
+        XCTAssertEqual(passwordless.username, invitation.username)
+        XCTAssertEqual(passwordless.clusterName, fixture.clusterName)
+        XCTAssertTrue(passwordless.allowedLogins.contains("teleport-test"))
+        XCTAssertTrue(passwordless.tlsPrivateKeyDER != passwordlessCredential.protectedKey)
+        XCTAssertTrue(passwordless.tlsCertificateDER != identity.tlsCertificateDER)
+        let savedPasswordless = try await client.identity()
+        XCTAssertTrue(savedPasswordless.sshCertificateOpenSSH == passwordless.sshCertificateOpenSSH)
+
+        // A copied local record cannot bind certificates to another requested account.
+        let otherAccount = invitation.username + "-other"
+        try await store.add(passwordlessCredential, username: otherAccount)
+        do {
+            _ = try await client.loginWithSecureEnclave(username: otherAccount, prompt: "Test account binding")
+            XCTFail("Passwordless login accepted a different requested account")
+        } catch let error as TeleportError {
+            XCTAssertEqual(error, .invalidResponse("login binding"))
+        }
+        await store.delete(username: otherAccount)
+        let afterWrongAccount = try await client.identity()
+        XCTAssertTrue(afterWrongAccount.tlsCertificateDER == passwordless.tlsCertificateDER)
+
+        try await client.deleteSecureEnclaveCredential(username: invitation.username)
+        let deletedResident = await store.load(username: invitation.username)
+        XCTAssertNil(deletedResident)
+        do {
+            _ = try await client.loginWithSecureEnclave(username: invitation.username, prompt: "Test deleted passwordless key")
+            XCTFail("Passwordless login succeeded after local deletion")
+        } catch let error as TeleportError {
+            XCTAssertEqual(error, .deviceCredentialMissing)
+        }
+        let afterLocalDeletion = try await client.identity()
+        XCTAssertTrue(afterLocalDeletion.tlsCertificateDER == passwordless.tlsCertificateDER)
         try await client.signOut()
         #else
         throw XCTSkip("The native auth-only fixture uses macOS Vision for test enrollment.")

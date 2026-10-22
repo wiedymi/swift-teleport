@@ -33,14 +33,14 @@ struct BrowserMFACertificateIssuer: Sendable {
 
     func remove() { try? FileManager.default.removeItem(at: directory) }
 
-    func response(to body: Data, fault: Fault = .none) throws -> Data {
+    func response(to body: Data, fault: Fault = .none, sshValidity: String = "-1m:+59m") throws -> Data {
         let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         let ssh = try XCTUnwrap(Data(base64Encoded: XCTUnwrap(request["ssh_pub_key"] as? String)))
         let tls = try XCTUnwrap(Data(base64Encoded: XCTUnwrap(request["tls_pub_key"] as? String)))
         try write(fault == .sshKey ? Data(contentsOf: url("host-ca.pub")) : ssh, "client.pub")
         try write(tls, "client-tls.pub")
         try run("/usr/bin/ssh-keygen", ["-q", "-s", file("user-ca"), "-I", "alice", "-n", "alice,-teleport-internal-join",
-                                       "-V", "-1m:+59m", file("client.pub")])
+                                       "-V", sshValidity, file("client.pub")])
         try run(openssl, ["x509", "-new", "-force_pubkey", file(fault == .tlsKey ? "other-tls.pub" : "client-tls.pub"),
                           "-CA", file("tls-ca.pem"), "-CAkey", file("tls-ca.key"), "-set_serial", "1", "-days", "1",
                           "-subj", "/CN=alice", "-extfile", file("client.conf"), "-out", file("client.pem")])

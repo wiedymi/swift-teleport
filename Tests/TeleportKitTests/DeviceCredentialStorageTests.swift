@@ -50,7 +50,7 @@ final class DeviceCredentialStorageTests: XCTestCase, @unchecked Sendable {
     func testStoredCredentialRejectsMissingOversizedAndInvalidFields() throws {
         try credential().validate()
         try credential(cluster: String(repeating: "a", count: 1024), id: Data(repeating: 1, count: 1024),
-                       key: Data(repeating: 2, count: 16_384)).validate()
+                       key: Data(repeating: 2, count: 16_384), userHandle: Data(repeating: 3, count: 64)).validate()
         for invalid in [
             credential(cluster: ""),
             credential(cluster: "cluster\n"),
@@ -60,6 +60,8 @@ final class DeviceCredentialStorageTests: XCTestCase, @unchecked Sendable {
             credential(id: Data(repeating: 1, count: 1025)),
             credential(key: Data()),
             credential(key: Data(repeating: 2, count: 16_385)),
+            credential(userHandle: Data()),
+            credential(userHandle: Data(repeating: 3, count: 65)),
         ] {
             XCTAssertThrowsError(try invalid.validate()) { error in
                 XCTAssertEqual(error as? TeleportError, .deviceCredentialStorage)
@@ -68,14 +70,22 @@ final class DeviceCredentialStorageTests: XCTestCase, @unchecked Sendable {
     }
 
     func testCredentialRoundTripPreservesFieldsAndRedactsDebugOutput() throws {
-        let original = credential()
+        let original = credential(userHandle: Data("opaque-user-handle".utf8))
         let restored = try JSONDecoder().decode(DeviceCredential.self, from: JSONEncoder().encode(original))
         XCTAssertEqual(restored.clusterName, original.clusterName)
         XCTAssertEqual(restored.credentialID, original.credentialID)
         XCTAssertEqual(restored.protectedKey, original.protectedKey)
+        XCTAssertEqual(restored.userHandle, original.userHandle)
         XCTAssertEqual(String(describing: restored), "DeviceCredential(<redacted>)")
         XCTAssertEqual(String(reflecting: restored), "DeviceCredential(<redacted>)")
         XCTAssertTrue(Mirror(reflecting: restored).children.isEmpty)
+    }
+
+    func testLegacyCredentialWithoutUserHandleStillDecodesForMFALogin() throws {
+        let bytes = Data(#"{"clusterName":"cluster","credentialID":"AQ==","protectedKey":"Ag=="}"#.utf8)
+        let restored = try JSONDecoder().decode(DeviceCredential.self, from: bytes)
+        try restored.validate()
+        XCTAssertNil(restored.userHandle)
     }
 
     func testInvalidPromptFailsBeforeAnyHardwareOperation() async throws {
@@ -108,8 +118,8 @@ final class DeviceCredentialStorageTests: XCTestCase, @unchecked Sendable {
         catch is CancellationError {}
     }
 
-    private func credential(cluster: String = "cluster", id: Data = Data([1]), key: Data = Data([2])) -> DeviceCredential {
-        DeviceCredential(clusterName: cluster, credentialID: id, protectedKey: key)
+    private func credential(cluster: String = "cluster", id: Data = Data([1]), key: Data = Data([2]), userHandle: Data? = nil) -> DeviceCredential {
+        DeviceCredential(clusterName: cluster, credentialID: id, protectedKey: key, userHandle: userHandle)
     }
 
     private func proxy(_ value: String) throws -> TeleportProxy {

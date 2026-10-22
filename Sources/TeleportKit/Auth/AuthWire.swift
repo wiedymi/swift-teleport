@@ -17,6 +17,8 @@ struct ProxyPing: Decodable, Sendable {
         let device_trust: DeviceTrust?
         let has_motd: Bool?
         let webauthn: WebAuthn?
+        let allow_passwordless: Bool?
+        let allow_headless: Bool?
     }
     struct Proxy: Decodable, Sendable { let tls_routing_enabled: Bool }
     let auth: Auth

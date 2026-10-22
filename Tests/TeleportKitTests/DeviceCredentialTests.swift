@@ -15,6 +15,16 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testPasswordlessRegistrationRequiresResidentKeyAndUserVerification() throws {
+        let proxy = try Self.proxy()
+        let valid = try DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation(usage: .passwordless))
+        try valid.validate(proxy: proxy, username: "alice", usage: .passwordless)
+        for fault in [DeviceTestServer.CreationFault.rp, .account, .algorithm, .attestation, .resident, .attachment, .verification] {
+            let challenge = try DeviceAuthRPC.registrationChallenge(DeviceTestServer.creation(fault: fault, usage: .passwordless))
+            XCTAssertThrowsError(try challenge.validate(proxy: proxy, username: "alice", usage: .passwordless))
+        }
+    }
+
     func testRegistrationRequiresTheMatchingSigningKeyAndAcceptsSlicedPublicKeyData() async throws {
         let proxy = try Self.proxy(), keys = DeviceTestKeys()
         let material = try await keys.create(prompt: "Test approval")
@@ -75,6 +85,46 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
                 _ = try await DeviceWebAuthn.assertion(challenge: challenge, credential: credential, proxy: proxy,
                                                       keys: keys, prompt: "Test approval")
                 XCTFail("invalid device challenge was signed")
+            } catch is TeleportError {}
+        }
+        let count = await keys.signCount
+        XCTAssertEqual(count, 0)
+    }
+
+    func testPasswordlessAssertionIncludesTheUserHandleForDiscoverableAndListedCredentials() async throws {
+        let proxy = try Self.proxy(), keys = DeviceTestKeys()
+        let material = try await keys.create(prompt: "Test approval")
+        let credential = DeviceCredential(clusterName: "cluster", credentialID: Data([1, 2, 3]),
+                                          protectedKey: material.protectedKey, userHandle: DeviceTestServer.userHandle)
+        for allowed in [nil, credential.credentialID] {
+            let challenge = try Self.assertionChallenge(credentialID: allowed, verification: "required")
+            let assertion = try await DeviceWebAuthn.assertion(challenge: challenge, credential: credential, proxy: proxy,
+                                                              keys: keys, prompt: "Test approval", usage: .passwordless)
+            XCTAssertEqual(try Self.urlData(XCTUnwrap(assertion.response.userHandle)), DeviceTestServer.userHandle)
+            XCTAssertEqual(try Self.urlData(assertion.rawId), credential.credentialID)
+            XCTAssertEqual(try Self.urlData(assertion.response.authenticatorData)[32], 0x05)
+        }
+    }
+
+    func testPasswordlessAssertionRejectsLegacyKeysWrongRPAndWeakVerificationBeforeSigning() async throws {
+        let proxy = try Self.proxy(), keys = DeviceTestKeys()
+        let material = try await keys.create(prompt: "Test approval")
+        let credential = DeviceCredential(clusterName: "cluster", credentialID: Data([1, 2, 3]),
+                                          protectedKey: material.protectedKey, userHandle: DeviceTestServer.userHandle)
+        let legacy = DeviceCredential(clusterName: "cluster", credentialID: credential.credentialID, protectedKey: material.protectedKey)
+        let valid = try Self.assertionChallenge(credentialID: nil, verification: "required")
+        let cases = [
+            (legacy, valid),
+            (credential, try Self.assertionChallenge(credentialID: nil, rpID: "other.example", verification: "required")),
+            (credential, try Self.assertionChallenge(credentialID: Data([9]), verification: "required")),
+            (credential, try Self.assertionChallenge(credentialID: nil, verification: "preferred")),
+            (credential, try Self.assertionChallenge(credentialID: nil, verification: "")),
+        ]
+        for (stored, challenge) in cases {
+            do {
+                _ = try await DeviceWebAuthn.assertion(challenge: challenge, credential: stored, proxy: proxy,
+                                                      keys: keys, prompt: "Test approval", usage: .passwordless)
+                XCTFail("invalid passwordless challenge was signed")
             } catch is TeleportError {}
         }
         let count = await keys.signCount
@@ -202,6 +252,132 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(snapshot.browserApprovalMapped)
     }
 
+    func testBrowserApprovedPasswordlessRegistrationThenLoginReturnsCompleteCertificates() async throws {
+        let issuer = try BrowserMFACertificateIssuer()
+        defer { issuer.remove() }
+        let proxy = try Self.proxy(), keys = DeviceTestKeys(), store = DeviceTestStore()
+        let previous = try await Self.identity(issuer: issuer, proxy: proxy)
+        let server = try await DeviceTestServer(issuer: issuer, keys: keys, approval: .browser, usage: .passwordless)
+        try await DeviceCredentialAuthentication.register(proxy: proxy, identity: previous, name: "Test device", otp: "",
+                                                          presenter: DeviceTestBrowser(server: server), prompt: "Register test device",
+                                                          store: store, keys: keys, usage: .passwordless,
+                                                          request: { try await server.request(path: $0, query: $1, body: $2) },
+                                                          rpc: { try await server.rpc(path: $0, body: $1) })
+        let registered = await store.load(username: "alice")
+        let credential = try XCTUnwrap(registered)
+        XCTAssertEqual(credential.userHandle, DeviceTestServer.userHandle)
+        let identityStore = DeviceTestIdentityStore(identity: previous)
+        let client = TeleportClient(proxy: proxy, identityStore: identityStore)
+        let identity = try await Self.login(client: client, proxy: proxy, store: store, keys: keys, server: server, usage: .passwordless)
+        XCTAssertEqual(identity.username, "alice")
+        XCTAssertEqual(identity.clusterName, "cluster")
+        XCTAssertEqual(identity.allowedLogins, ["alice"])
+        XCTAssertTrue(identity.isUsable())
+        XCTAssertTrue(identity.tlsPrivateKeyDER != credential.protectedKey)
+        let stored = await identityStore.load(), writes = await identityStore.writeCount
+        XCTAssertEqual(stored?.tlsCertificateDER, identity.tlsCertificateDER)
+        XCTAssertEqual(writes, 1)
+        let snapshot = await server.snapshot()
+        XCTAssertEqual(snapshot.registrations, 1)
+        XCTAssertEqual(snapshot.finishes, 1)
+        XCTAssertTrue(snapshot.assertionSignatureVerified)
+        XCTAssertTrue(snapshot.browserApprovalMapped)
+    }
+
+    func testPasswordlessRegistrationRejectsNonResidentAcknowledgmentAndExistingCredentials() async throws {
+        let issuer = try BrowserMFACertificateIssuer()
+        defer { issuer.remove() }
+        let proxy = try Self.proxy(), keys = DeviceTestKeys(), identity = try await Self.identity(issuer: issuer, proxy: proxy)
+        let store = DeviceTestStore()
+        let server = try await DeviceTestServer(issuer: issuer, keys: keys, ackFault: .resident, usage: .passwordless)
+        do {
+            try await Self.register(proxy: proxy, identity: identity, store: store, keys: keys, server: server, usage: .passwordless)
+            XCTFail("a non-resident acknowledgment was accepted for passwordless login")
+        } catch let error as TeleportError { XCTAssertEqual(error, .invalidResponse("registered device binding")) }
+        let saved = await store.load(username: "alice")
+        XCTAssertNil(saved)
+        let material = await keys.material()
+        let legacy = DeviceTestStore(credential: .init(clusterName: "cluster", credentialID: Data([1]), protectedKey: material.protectedKey))
+        do {
+            try await Self.register(proxy: proxy, identity: identity, store: legacy, keys: keys, server: server, usage: .passwordless)
+            XCTFail("passwordless setup replaced an existing MFA credential")
+        } catch let error as TeleportError { XCTAssertEqual(error, .deviceCredentialExists) }
+        let preserved = await legacy.load(username: "alice")
+        XCTAssertNil(preserved?.userHandle)
+        XCTAssertEqual(preserved?.credentialID, Data([1]))
+    }
+
+    func testPasswordlessLoginRequiresAResidentCredentialAndMatchingCluster() async throws {
+        let issuer = try BrowserMFACertificateIssuer()
+        defer { issuer.remove() }
+        let proxy = try Self.proxy()
+        for failure in [DeviceTestMissing.credential, .legacy, .key, .cluster] {
+            let keys = DeviceTestKeys(mode: failure == .key ? .missing : .ready)
+            let material = await keys.material()
+            let credential = DeviceCredential(clusterName: failure == .cluster ? "other" : "cluster",
+                                              credentialID: DeviceTestServer.defaultCredentialID, protectedKey: material.protectedKey,
+                                              userHandle: failure == .legacy ? nil : DeviceTestServer.userHandle)
+            let store = DeviceTestStore(credential: failure == .credential ? nil : credential)
+            let server = try await DeviceTestServer(issuer: issuer, keys: keys, usage: .passwordless)
+            do {
+                _ = try await DeviceCredentialAuthentication.loginPasswordless(proxy: proxy, username: "alice", ttl: 3600,
+                                                                               prompt: "Test login", store: store, keys: keys,
+                                                                               request: { try await server.request(path: $0, query: $1, body: $2) })
+                XCTFail("passwordless login accepted an unusable credential")
+            } catch let error as TeleportError {
+                XCTAssertEqual(error, failure == .cluster ? .invalidResponse("device credential cluster") : .deviceCredentialMissing)
+            }
+            let snapshot = await server.snapshot()
+            XCTAssertEqual(snapshot.finishes, 0)
+        }
+    }
+
+    func testPasswordlessLoginRejectsDisabledPolicyBeforeSigning() async throws {
+        let proxy = try Self.proxy(), keys = DeviceTestKeys(), material = await keys.material()
+        let store = DeviceTestStore(credential: .init(clusterName: "cluster", credentialID: Data([1]),
+                                                     protectedKey: material.protectedKey, userHandle: DeviceTestServer.userHandle))
+        for policy in [TeleportUnsupportedPolicy.passwordless, .hardwareKey, .deviceTrust] {
+            var auth: [String: Any] = ["type": "local", "second_factor": "on", "allow_passwordless": policy != .passwordless,
+                                       "webauthn": ["rp_id": "proxy.example"]]
+            if policy == .hardwareKey { auth["private_key_policy"] = "hardware_key" }
+            if policy == .deviceTrust { auth["device_trust"] = ["auto_enroll": true] }
+            let ping = try JSONSerialization.data(withJSONObject: ["auth": auth, "proxy": ["tls_routing_enabled": true],
+                                                                   "cluster_name": "cluster", "server_version": "18.11.4"])
+            do {
+                _ = try await DeviceCredentialAuthentication.loginPasswordless(proxy: proxy, username: "alice", ttl: 3600,
+                                                                               prompt: "Test login", store: store, keys: keys,
+                                                                               request: { path, _, _ in
+                    guard path == "v1/webapi/ping" else { throw DeviceTestFailure.request }
+                    return ping
+                })
+                XCTFail("passwordless login bypassed a disabled server policy")
+            } catch let error as TeleportError { XCTAssertEqual(error, .unsupportedPolicy(policy)) }
+        }
+        let count = await keys.signCount
+        XCTAssertEqual(count, 0)
+    }
+
+    func testCanceledPasswordlessApprovalPreservesTheExistingIdentity() async throws {
+        let issuer = try BrowserMFACertificateIssuer()
+        defer { issuer.remove() }
+        let proxy = try Self.proxy(), keys = DeviceTestKeys(mode: .wait), material = await keys.material()
+        let previous = try await Self.identity(issuer: issuer, proxy: proxy)
+        let store = DeviceTestStore(credential: .init(clusterName: "cluster", credentialID: DeviceTestServer.defaultCredentialID,
+                                                     protectedKey: material.protectedKey, userHandle: DeviceTestServer.userHandle))
+        let server = try await DeviceTestServer(issuer: issuer, keys: keys, usage: .passwordless)
+        let identityStore = DeviceTestIdentityStore(identity: previous), client = TeleportClient(proxy: proxy, identityStore: identityStore)
+        let login = Task { try await Self.login(client: client, proxy: proxy, store: store, keys: keys, server: server, usage: .passwordless) }
+        await keys.waitForSign()
+        login.cancel()
+        do { _ = try await login.value; XCTFail("canceled passwordless approval issued certificates") }
+        catch is CancellationError {}
+        let stored = await identityStore.load(), writes = await identityStore.writeCount
+        let snapshot = await server.snapshot()
+        XCTAssertEqual(stored?.tlsCertificateDER, previous.tlsCertificateDER)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(snapshot.finishes, 0)
+    }
+
     func testInvalidRegistrationAcknowledgmentDoesNotPersistTheCredential() async throws {
         let issuer = try BrowserMFACertificateIssuer()
         defer { issuer.remove() }
@@ -299,15 +475,18 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
         let issuer = try BrowserMFACertificateIssuer()
         defer { issuer.remove() }
         let proxy = try Self.proxy(), previous = try await Self.identity(issuer: issuer, proxy: proxy)
-        for fault in [BrowserMFACertificateIssuer.Fault.account, .cluster, .sshKey, .tlsKey] {
+        for (usage, fault) in [DeviceCredentialUsage.mfa, .passwordless].flatMap({ usage in
+            [BrowserMFACertificateIssuer.Fault.account, .cluster, .sshKey, .tlsKey].map { (usage, $0) }
+        }) {
             let keys = DeviceTestKeys(), material = await keys.material()
             let store = DeviceTestStore(credential: .init(clusterName: "cluster", credentialID: DeviceTestServer.defaultCredentialID,
-                                                         protectedKey: material.protectedKey))
-            let server = try await DeviceTestServer(issuer: issuer, keys: keys, certificateFault: fault)
+                                                         protectedKey: material.protectedKey,
+                                                         userHandle: usage == .passwordless ? DeviceTestServer.userHandle : nil))
+            let server = try await DeviceTestServer(issuer: issuer, keys: keys, certificateFault: fault, usage: usage)
             let identityStore = DeviceTestIdentityStore(identity: previous)
             let client = TeleportClient(proxy: proxy, identityStore: identityStore)
             do {
-                _ = try await Self.login(client: client, proxy: proxy, store: store, keys: keys, server: server)
+                _ = try await Self.login(client: client, proxy: proxy, store: store, keys: keys, server: server, usage: usage)
                 XCTFail("identity with wrong certificate binding was stored")
             } catch is TeleportError {}
             let preserved = await identityStore.load()
@@ -354,16 +533,22 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
         return try response.identity(proxy: proxy, username: "alice", cluster: "cluster", key: key, userTrust: trust, ttl: 3600)
     }
     private static func register(proxy: TeleportProxy, identity: TeleportIdentity, store: DeviceTestStore,
-                                 keys: DeviceTestKeys, server: DeviceTestServer, otp: String = "123456") async throws {
+                                 keys: DeviceTestKeys, server: DeviceTestServer, otp: String = "123456",
+                                 usage: DeviceCredentialUsage = .mfa) async throws {
         try await DeviceCredentialAuthentication.register(proxy: proxy, identity: identity, name: "Test device", otp: otp,
-                                                          presenter: nil, prompt: "Register test device", store: store, keys: keys,
+                                                          presenter: nil, prompt: "Register test device", store: store, keys: keys, usage: usage,
                                                           request: { try await server.request(path: $0, query: $1, body: $2) },
                                                           rpc: { try await server.rpc(path: $0, body: $1) })
     }
     private static func login(client: TeleportClient, proxy: TeleportProxy, store: DeviceTestStore,
-                              keys: DeviceTestKeys, server: DeviceTestServer) async throws -> TeleportIdentity {
+                              keys: DeviceTestKeys, server: DeviceTestServer, usage: DeviceCredentialUsage = .mfa) async throws -> TeleportIdentity {
         try await client.sharedLogin(method: .deviceCredential("alice")) {
-            try await DeviceCredentialAuthentication.login(proxy: proxy, username: "alice", password: "test-password", ttl: 3600,
+            if usage == .passwordless {
+                return try await DeviceCredentialAuthentication.loginPasswordless(proxy: proxy, username: "alice", ttl: 3600,
+                                                                                  prompt: "Authenticate test device", store: store, keys: keys,
+                                                                                  request: { try await server.request(path: $0, query: $1, body: $2) })
+            }
+            return try await DeviceCredentialAuthentication.login(proxy: proxy, username: "alice", password: "test-password", ttl: 3600,
                                                            prompt: "Authenticate test device", store: store, keys: keys,
                                                            request: { try await server.request(path: $0, query: $1, body: $2) })
         }
@@ -371,10 +556,11 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
     #endif
 
     private static func proxy() throws -> TeleportProxy { try TeleportProxy(url: XCTUnwrap(URL(string: "https://proxy.example"))) }
-    private static func assertionChallenge(credentialID: Data?, rpID: String = "proxy.example") throws -> DeviceWebAuthn.AssertionChallenge {
+    private static func assertionChallenge(credentialID: Data?, rpID: String = "proxy.example",
+                                           verification: String = "discouraged") throws -> DeviceWebAuthn.AssertionChallenge {
         let options: [String: Any] = ["challenge": DeviceTestServer.challenge.base64EncodedString(), "rpId": rpID,
                                       "allowCredentials": credentialID.map { [["type": "public-key", "id": $0.base64EncodedString()]] } ?? [],
-                                      "userVerification": "discouraged"]
+                                      "userVerification": verification]
         return try JSONDecoder().decode(DeviceWebAuthn.AssertionChallenge.self, from: JSONSerialization.data(withJSONObject: ["publicKey": options]))
     }
     private static func urlData(_ string: String) throws -> Data {
@@ -385,7 +571,7 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
 }
 
 private enum DeviceTestFailure: Error { case request, identityWrite }
-private enum DeviceTestMissing: Equatable { case credential, key, cluster }
+private enum DeviceTestMissing: Equatable { case credential, legacy, key, cluster }
 
 private actor DeviceTestKeys: DeviceKeyOperations {
     enum Mode: Equatable, Sendable { case ready, unavailable, deny, wait, missing }
@@ -447,8 +633,8 @@ private actor DeviceTestIdentityStore: TeleportIdentityStore {
 }
 
 private actor DeviceTestServer {
-    enum CreationFault: Equatable, Sendable { case none, rp, account, algorithm, attestation, resident, attachment }
-    enum AckFault: Equatable, Sendable { case none, id, rp, key, deviceType }
+    enum CreationFault: Equatable, Sendable { case none, rp, account, algorithm, attestation, resident, attachment, verification }
+    enum AckFault: Equatable, Sendable { case none, id, rp, key, deviceType, resident }
     enum Approval: Equatable, Sendable { case none, totp, browser }
     struct Snapshot: Sendable {
         let registrations: Int
@@ -458,6 +644,7 @@ private actor DeviceTestServer {
     }
     static let challenge = Data([0xfb, 0xff, 0x01, 0x02, 0x03, 0x04])
     static let defaultCredentialID = Data([1, 2, 3])
+    static let userHandle = Data("opaque-user-handle".utf8)
     static let browserRequestID = "27cdb56a-a651-4e8e-b606-228897091c5f"
     private var credentialID = DeviceTestServer.defaultCredentialID
     private var registrations = 0, finishes = 0
@@ -470,31 +657,49 @@ private actor DeviceTestServer {
     private let ackFault: AckFault
     private let certificateFault: BrowserMFACertificateIssuer.Fault
     private let approval: Approval
+    private let usage: DeviceCredentialUsage
     private var callbackURL: URL?
     init(issuer: BrowserMFACertificateIssuer, keys: DeviceTestKeys, ackFault: AckFault = .none,
-         certificateFault: BrowserMFACertificateIssuer.Fault = .none, approval: Approval = .totp) async throws {
+         certificateFault: BrowserMFACertificateIssuer.Fault = .none, approval: Approval = .totp,
+         usage: DeviceCredentialUsage = .mfa) async throws {
         self.issuer = issuer; exports = try issuer.authorityExports()
         let material = await keys.material()
         publicKey = try P256.Signing.PublicKey(x963Representation: material.publicKeyX963)
         self.ackFault = ackFault; self.certificateFault = certificateFault
         self.approval = approval
+        self.usage = usage
     }
     func request(path: String, query: [URLQueryItem], body: Data?) throws -> Data {
         switch path {
         case "v1/webapi/ping":
-            return Data(#"{"auth":{"type":"local","second_factor":"on","webauthn":{"rp_id":"proxy.example"}},"proxy":{"tls_routing_enabled":true},"cluster_name":"cluster","server_version":"18.11.4"}"#.utf8)
+            return Data(#"{"auth":{"type":"local","second_factor":"on","allow_passwordless":true,"webauthn":{"rp_id":"proxy.example"}},"proxy":{"tls_routing_enabled":true},"cluster_name":"cluster","server_version":"18.11.4"}"#.utf8)
         case "v1/webapi/mfa/login/begin":
-            guard let body, let value = try JSONSerialization.jsonObject(with: body) as? [String: Any],
-                  value["user"] as? String == "alice", value["pass"] as? String == "test-password" else { throw DeviceTestFailure.request }
+            guard let body, let value = try JSONSerialization.jsonObject(with: body) as? [String: Any] else { throw DeviceTestFailure.request }
+            switch usage {
+            case .mfa:
+                guard value["user"] as? String == "alice", value["pass"] as? String == "test-password",
+                      value["passwordless"] == nil else { throw DeviceTestFailure.request }
+            case .passwordless:
+                guard value["passwordless"] as? Bool == true, value.count == 1 else { throw DeviceTestFailure.request }
+            }
             return try JSONSerialization.data(withJSONObject: ["webauthn_challenge": ["publicKey": [
                 "challenge": Self.challenge.base64EncodedString(), "rpId": "proxy.example",
-                "allowCredentials": [["type": "public-key", "id": credentialID.base64EncodedString()]], "userVerification": "discouraged",
+                "allowCredentials": usage == .passwordless ? [] : [["type": "public-key", "id": credentialID.base64EncodedString()]],
+                "userVerification": usage == .passwordless ? "required" : "discouraged",
             ]]])
         case "v1/webapi/mfa/login/finish":
             guard let body, let value = try JSONSerialization.jsonObject(with: body) as? [String: Any],
                   let object = value["webauthn_challenge_response"] else { throw DeviceTestFailure.request }
             let assertion = try JSONDecoder().decode(BrowserMFAAssertion.self, from: JSONSerialization.data(withJSONObject: object))
             try assertion.validate()
+            switch usage {
+            case .mfa:
+                guard value["user"] as? String == "alice", value["password"] as? String == "test-password",
+                      assertion.response.userHandle == nil else { throw DeviceTestFailure.request }
+            case .passwordless:
+                guard value["user"] as? String == "", value["password"] as? String == "", value["totp_code"] as? String == "",
+                      try urlData(XCTUnwrap(assertion.response.userHandle)) == Self.userHandle else { throw DeviceTestFailure.request }
+            }
             let clientData = try urlData(assertion.response.clientDataJSON)
             let client = try XCTUnwrap(JSONSerialization.jsonObject(with: clientData) as? [String: Any])
             let auth = try urlData(assertion.response.authenticatorData)
@@ -532,7 +737,7 @@ private actor DeviceTestServer {
             return try response.serializedData()
         case DeviceAuthRPC.registrationPath:
             let request = try Teleportkit_Deviceauth_CreateRegisterChallengeRequest(serializedBytes: body)
-            guard request.deviceType == 3, request.deviceUsage == 1 else { throw DeviceTestFailure.request }
+            guard request.deviceType == 3, request.deviceUsage == usage.rawValue else { throw DeviceTestFailure.request }
             switch approval {
             case .browser:
                 guard case .browser(let response)? = request.existingMfaResponse.response,
@@ -547,10 +752,13 @@ private actor DeviceTestServer {
             case .none:
                 guard !request.hasExistingMfaResponse else { throw DeviceTestFailure.request }
             }
-            return try Self.creation()
+            return try Self.creation(usage: usage)
         case DeviceAuthRPC.addPath:
             let request = try Teleportkit_Deviceauth_AddMFADeviceSyncRequest(serializedBytes: body)
             let creation = request.newMfaResponse.webauthn
+            guard request.deviceUsage == usage.rawValue, creation.extensions.credProps.rk == (usage == .passwordless) else {
+                throw DeviceTestFailure.request
+            }
             var cbor = DeviceTestCBOR(bytes: Array(creation.response.attestationObject))
             let auth = try cbor.registrationAuthData()
             guard creation.type == "public-key", auth.count >= 55,
@@ -566,6 +774,7 @@ private actor DeviceTestServer {
             device.credentialID = ackFault == .id ? Data([9]) : credentialID
             device.credentialRpID = ackFault == .rp ? "other.example" : "proxy.example"
             device.publicKeyCbor = ackFault == .key ? Data([0]) : cose
+            device.residentKey = usage == .passwordless && ackFault != .resident
             response.device.webauthn = device
             if ackFault == .deviceType { response.device.totp = Teleportkit_Deviceauth_UnsupportedDevice() }
             registrations += 1
@@ -601,17 +810,18 @@ private actor DeviceTestServer {
         .init(registrations: registrations, finishes: finishes,
               assertionSignatureVerified: assertionSignatureVerified, browserApprovalMapped: browserApprovalMapped)
     }
-    nonisolated static func creation(fault: CreationFault = .none) throws -> Data {
+    nonisolated static func creation(fault: CreationFault = .none, usage: DeviceCredentialUsage = .mfa) throws -> Data {
         var response = Teleportkit_Deviceauth_MFARegisterChallenge()
         response.webauthn.publicKey.challenge = challenge
         response.webauthn.publicKey.rp.id = fault == .rp ? "example" : "proxy.example"
-        response.webauthn.publicKey.user.id = Data("opaque-user-handle".utf8)
+        response.webauthn.publicKey.user.id = userHandle
         response.webauthn.publicKey.user.name = fault == .account ? "other" : "alice"
         var parameter = Teleportkit_Deviceauth_CredentialParameter()
         parameter.type = "public-key"; parameter.alg = fault == .algorithm ? -257 : -7
         response.webauthn.publicKey.credentialParameters = [parameter]
         response.webauthn.publicKey.attestation = fault == .attestation ? "direct" : "none"
-        response.webauthn.publicKey.authenticatorSelection.requireResidentKey = fault == .resident
+        response.webauthn.publicKey.authenticatorSelection.requireResidentKey = (usage == .passwordless) != (fault == .resident)
+        response.webauthn.publicKey.authenticatorSelection.userVerification = usage == .passwordless && fault != .verification ? "required" : "discouraged"
         response.webauthn.publicKey.authenticatorSelection.authenticatorAttachment = fault == .attachment ? "cross-platform" : "platform"
         return try response.serializedData()
     }

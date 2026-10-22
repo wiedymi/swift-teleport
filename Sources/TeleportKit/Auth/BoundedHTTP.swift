@@ -15,13 +15,15 @@ final class BoundedHTTP: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     init(proxy: TeleportProxy, limit: Int = 1_048_576) { self.proxy = proxy; self.limit = limit }
 
-    func run(path: String, query: [URLQueryItem] = [], body: Data? = nil, method: String? = nil) async throws -> Data {
+    func run(path: String, query: [URLQueryItem] = [], body: Data? = nil, method: String? = nil,
+             timeout: TimeInterval = 60) async throws -> Data {
+        guard timeout.isFinite, timeout > 0, timeout <= 180 else { throw TeleportError.invalidConfiguration("HTTP timeout") }
         var endpoint = URLComponents(url: proxy.url.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { endpoint.queryItems = query }
         var request = URLRequest(url: endpoint.url!)
         request.httpMethod = method ?? (body == nil ? "GET" : "POST")
         request.httpBody = body
-        request.timeoutInterval = 60
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         return try await withTaskCancellationHandler {
@@ -33,7 +35,7 @@ final class BoundedHTTP: NSObject, URLSessionDataDelegate, @unchecked Sendable {
                 let configuration = URLSessionConfiguration.ephemeral
                 configuration.urlCache = nil; configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
                 configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-                configuration.timeoutIntervalForResource = 60
+                configuration.timeoutIntervalForResource = timeout
                 let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
                 let session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
                 self.session = session

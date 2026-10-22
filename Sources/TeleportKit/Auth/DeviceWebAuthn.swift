@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import TeleportCore
 
-/// Only the non-resident ES256 MFA credential used by this library is supported.
+/// ES256 device credentials for MFA or passwordless login.
 enum DeviceWebAuthn {
     struct Descriptor: Decodable {
         let type: String
@@ -34,7 +34,7 @@ enum DeviceWebAuthn {
         }
         let publicKey: Options
 
-        func validate(proxy: TeleportProxy, username: String) throws {
+        func validate(proxy: TeleportProxy, username: String, usage: DeviceCredentialUsage = .mfa) throws {
             try DeviceWebAuthn.validate(rpID: publicKey.rp.id, challenge: publicKey.challenge, proxy: proxy)
             guard publicKey.user.name == username, !publicKey.user.id.isEmpty, publicKey.user.id.count <= 64,
                   publicKey.pubKeyCredParams.count <= 32,
@@ -44,9 +44,10 @@ enum DeviceWebAuthn {
                 throw TeleportError.unsupportedPolicy(.authenticatorRequirements)
             }
             let selection = publicKey.authenticatorSelection
-            guard !selection.requireResidentKey,
+            guard selection.requireResidentKey == (usage == .passwordless),
                   ["", "platform"].contains(selection.authenticatorAttachment),
-                  ["", "discouraged", "preferred", "required"].contains(selection.userVerification) else {
+                  ["", "discouraged", "preferred", "required"].contains(selection.userVerification),
+                  usage == .mfa || selection.userVerification == "required" else {
                 throw TeleportError.unsupportedPolicy(.authenticatorRequirements)
             }
             try DeviceWebAuthn.validate(descriptors: publicKey.excludeCredentials)
@@ -61,13 +62,17 @@ enum DeviceWebAuthn {
         }
         let publicKey: Options
 
-        func validate(proxy: TeleportProxy, credentialID: Data) throws {
+        func validate(proxy: TeleportProxy, credentialID: Data, usage: DeviceCredentialUsage = .mfa) throws {
             try DeviceWebAuthn.validate(rpID: publicKey.rpId, challenge: publicKey.challenge, proxy: proxy)
             let allowed = publicKey.allowCredentials ?? []
-            guard !allowed.isEmpty, allowed.count <= 128 else { throw TeleportError.unsupportedPolicy(.passwordless) }
+            guard allowed.count <= 128 else { throw TeleportError.limitExceeded("WebAuthn credential descriptors") }
+            guard usage == .passwordless || !allowed.isEmpty else { throw TeleportError.unsupportedPolicy(.passwordless) }
             try DeviceWebAuthn.validate(descriptors: allowed)
-            guard allowed.contains(where: { $0.id == credentialID }) else { throw TeleportError.deviceCredentialMissing }
+            guard allowed.isEmpty || allowed.contains(where: { $0.id == credentialID }) else { throw TeleportError.deviceCredentialMissing }
             guard ["", "discouraged", "preferred", "required"].contains(publicKey.userVerification ?? "") else {
+                throw TeleportError.unsupportedPolicy(.authenticatorRequirements)
+            }
+            guard usage == .mfa || publicKey.userVerification == "required" else {
                 throw TeleportError.unsupportedPolicy(.authenticatorRequirements)
             }
         }
@@ -80,8 +85,9 @@ enum DeviceWebAuthn {
     }
 
     static func registration(challenge: Creation, proxy: TeleportProxy, username: String,
-                             key: DeviceKeyMaterial, keys: any DeviceKeyOperations, prompt: String) async throws -> Registration {
-        try challenge.validate(proxy: proxy, username: username)
+                             key: DeviceKeyMaterial, keys: any DeviceKeyOperations, prompt: String,
+                             usage: DeviceCredentialUsage = .mfa) async throws -> Registration {
+        try challenge.validate(proxy: proxy, username: username, usage: usage)
         guard key.publicKeyX963.count == 65, key.publicKeyX963.first == 4,
               let publicKey = try? P256.Signing.PublicKey(x963Representation: key.publicKeyX963) else {
             throw TeleportError.invalidResponse("device public key")
@@ -130,8 +136,11 @@ enum DeviceWebAuthn {
     }
 
     static func assertion(challenge: AssertionChallenge, credential: DeviceCredential, proxy: TeleportProxy,
-                          keys: any DeviceKeyOperations, prompt: String) async throws -> BrowserMFAAssertion {
-        try challenge.validate(proxy: proxy, credentialID: credential.credentialID)
+                          keys: any DeviceKeyOperations, prompt: String,
+                          usage: DeviceCredentialUsage = .mfa) async throws -> BrowserMFAAssertion {
+        try credential.validate()
+        guard usage == .mfa || credential.userHandle != nil else { throw TeleportError.deviceCredentialMissing }
+        try challenge.validate(proxy: proxy, credentialID: credential.credentialID, usage: usage)
         let clientData = try clientData(type: "webauthn.get", challenge: challenge.publicKey.challenge, proxy: proxy)
         let auth = authenticatorData(rpID: challenge.publicKey.rpId, flags: 0x05)
         let signature = try await keys.sign(auth + Data(SHA256.hash(data: clientData)), protectedKey: credential.protectedKey, prompt: prompt)
@@ -139,7 +148,8 @@ enum DeviceWebAuthn {
         let assertion = BrowserMFAAssertion(id: urlBytes(credential.credentialID), type: "public-key", rawId: urlBytes(credential.credentialID),
                                             extensions: .init(appid: false, credProps: nil),
                                             response: .init(clientDataJSON: urlBytes(clientData), authenticatorData: urlBytes(auth),
-                                                            signature: urlBytes(signature), userHandle: nil))
+                                                            signature: urlBytes(signature),
+                                                            userHandle: usage == .passwordless ? credential.userHandle.map(urlBytes) : nil))
         try assertion.validate()
         return assertion
     }

@@ -13,16 +13,18 @@ public actor TeleportClient {
         case browserMFA(String)
         case sso(TeleportConnector.Kind, String)
         case deviceCredential(String)
+        case passwordlessDeviceCredential(String)
     }
     private enum Operation {
         case idle(UUID)
         case login(method: LoginMethod, id: UUID, task: Task<TeleportIdentity, any Error>)
         case signOut(id: UUID, task: Task<Void, any Error>)
         case credentialChange(id: UUID, task: Task<Void, any Error>)
+        case deviceSetup(id: UUID, task: Task<TeleportIdentity, any Error>)
 
         var id: UUID {
             switch self {
-            case .idle(let id), .login(_, let id, _), .signOut(let id, _), .credentialChange(let id, _): id
+            case .idle(let id), .login(_, let id, _), .signOut(let id, _), .credentialChange(let id, _), .deviceSetup(let id, _): id
             }
         }
     }
@@ -114,6 +116,63 @@ public actor TeleportClient {
         }
     }
 
+    /// Approve initial setup in the browser, register a biometric device key, and issue a normal identity.
+    /// The short-lived setup identity stays in memory. A second browser approval can be required.
+    public func registerSecureEnclaveCredential(username: String, name: String, browser: any TeleportBrowserPresenter,
+                                               prompt: String, ttl: TimeInterval = 3600) async throws -> TeleportIdentity {
+        try Self.validatePasswordlessInput(username: username, prompt: prompt, ttl: ttl)
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.utf8.count <= 30,
+              !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw TeleportError.invalidConfiguration("device setup input")
+        }
+        guard let store = deviceCredentialStorage else { throw TeleportError.invalidConfiguration("Secure Enclave credentials are not configured") }
+        return try await setupDeviceCredential { [self, proxy, deviceKeyOperations] in
+            guard try await store.load(username: username) == nil else { throw TeleportError.deviceCredentialExists }
+            try await deviceKeyOperations.checkAvailability()
+            let bootstrap = try await HeadlessBootstrap.perform(proxy: proxy, username: username, presenter: browser)
+            try Task.checkCancellation()
+            try await DeviceCredentialAuthentication.register(proxy: proxy, identity: bootstrap, name: name, otp: "", presenter: browser,
+                                                               prompt: prompt, store: store, keys: deviceKeyOperations, usage: .passwordless) { path, message in
+                try await self.authRequest(path: path, message: message, identity: bootstrap)
+            }
+            return try await DeviceCredentialAuthentication.loginPasswordless(proxy: proxy, username: username, ttl: ttl, prompt: prompt,
+                                                                               store: store, keys: deviceKeyOperations)
+        }
+    }
+
+    /// Issue fresh SSH/TLS certificates with the registered device key and Face ID or Touch ID.
+    public func loginWithSecureEnclave(username: String, prompt: String, ttl: TimeInterval = 3600) async throws -> TeleportIdentity {
+        try Self.validatePasswordlessInput(username: username, prompt: prompt, ttl: ttl)
+        guard let store = deviceCredentialStorage else { throw TeleportError.invalidConfiguration("Secure Enclave credentials are not configured") }
+        return try await sharedLogin(method: .passwordlessDeviceCredential(username)) { [proxy, deviceKeyOperations] in
+            try await DeviceCredentialAuthentication.loginPasswordless(proxy: proxy, username: username, ttl: ttl, prompt: prompt,
+                                                                       store: store, keys: deviceKeyOperations)
+        }
+    }
+
+    private static func validatePasswordlessInput(username: String, prompt: String, ttl: TimeInterval) throws {
+        guard !username.isEmpty, username.utf8.count <= 1024, ttl.isFinite, ttl >= 60, ttl <= 43_200 else {
+            throw TeleportError.invalidConfiguration("login input")
+        }
+        try SecureEnclaveDeviceKeyOperations.validatePrompt(prompt)
+    }
+
+    // Keep setup exclusive: callers can supply different browsers and device names.
+    func setupDeviceCredential(operation: @escaping @Sendable () async throws -> TeleportIdentity) async throws -> TeleportIdentity {
+        try Task.checkCancellation()
+        guard case .idle = self.operation else { throw TeleportError.invalidConfiguration("another authentication operation is active") }
+        let id = UUID(), store = identityStore
+        let task = Task {
+            defer { clearOperation(id) }
+            let identity = try await operation()
+            try Task.checkCancellation()
+            try await store.replace(with: identity)
+            return identity
+        }
+        self.operation = .deviceSetup(id: id, task: task)
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
     /// Removes only the local credential. Teleport's device registration and issued certificates remain valid.
     public func deleteSecureEnclaveCredential(username: String) async throws {
         guard !username.isEmpty, username.utf8.count <= 1024 else { throw TeleportError.invalidConfiguration("device account") }
@@ -145,7 +204,7 @@ public actor TeleportClient {
         let task: Task<TeleportIdentity, any Error>
         switch self.operation {
         case .signOut: throw TeleportError.invalidConfiguration("sign-out is active")
-        case .credentialChange: throw TeleportError.invalidConfiguration("device credential setup or deletion is active")
+        case .credentialChange, .deviceSetup: throw TeleportError.invalidConfiguration("device credential setup or deletion is active")
         case .login(let pendingMethod, _, let pendingTask):
             guard pendingMethod == method else { throw TeleportError.invalidConfiguration("a different login is active") }
             task = pendingTask
@@ -202,7 +261,10 @@ public actor TeleportClient {
     public func signOut() async throws {
         if case .signOut(_, let task) = operation { try await task.value; return }
         let loginTask: Task<TeleportIdentity, any Error>?
-        if case .login(_, _, let task) = operation { loginTask = task; task.cancel() } else { loginTask = nil }
+        switch operation {
+        case .login(_, _, let task), .deviceSetup(_, let task): loginTask = task; task.cancel()
+        default: loginTask = nil
+        }
         let credentialTask: Task<Void, any Error>?
         if case .credentialChange(_, let task) = operation { credentialTask = task; task.cancel() } else { credentialTask = nil }
         let id = UUID(), store = identityStore

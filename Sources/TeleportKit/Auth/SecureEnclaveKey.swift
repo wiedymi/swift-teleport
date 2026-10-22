@@ -10,12 +10,27 @@ struct DeviceKeyMaterial: Sendable {
 }
 
 protocol DeviceKeyOperations: Sendable {
+    func checkAvailability() async throws
     func create(prompt: String) async throws -> DeviceKeyMaterial
     /// Returns the ASN.1 DER ECDSA signature required by WebAuthn ES256.
     func sign(_ data: Data, protectedKey: Data, prompt: String) async throws -> Data
 }
 
+extension DeviceKeyOperations {
+    func checkAvailability() async throws {}
+}
+
 struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
+    func checkAvailability() async throws {
+        try Task.checkCancellation()
+        try await Task.detached {
+            let context = LAContext()
+            defer { context.invalidate() }
+            try Self.requireBiometrics(context)
+        }.value
+        try Task.checkCancellation()
+    }
+
     func create(prompt: String) async throws -> DeviceKeyMaterial {
         try Self.validatePrompt(prompt)
         let authentication = AuthenticationPrompt(reason: prompt)

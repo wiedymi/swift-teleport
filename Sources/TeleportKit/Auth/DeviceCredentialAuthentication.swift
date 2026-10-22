@@ -3,7 +3,13 @@ import TeleportCore
 
 typealias AuthRPC = @Sendable (_ path: String, _ message: Data) async throws -> Data
 
+enum DeviceCredentialUsage: Int32, Sendable {
+    case mfa = 1
+    case passwordless = 2
+}
+
 enum DeviceCredentialAuthentication {
+    private struct PasswordlessBegin: Encodable { let passwordless = true }
     private struct LoginChallenge: Decodable {
         let webauthn_challenge: DeviceWebAuthn.AssertionChallenge?
         let sso_challenge: JSONValue?
@@ -11,7 +17,7 @@ enum DeviceCredentialAuthentication {
 
     static func register(proxy: TeleportProxy, identity: TeleportIdentity, name: String, otp: String,
                          presenter: (any TeleportBrowserPresenter)?, prompt: String,
-                         store: any DeviceCredentialStorage, keys: any DeviceKeyOperations,
+                         store: any DeviceCredentialStorage, keys: any DeviceKeyOperations, usage: DeviceCredentialUsage = .mfa,
                          request: AuthRequest? = nil, rpc: AuthRPC) async throws {
         let request = http(proxy: proxy, request: request)
         guard identity.proxy == proxy, identity.isUsable() else { throw TeleportError.authenticationRequired }
@@ -19,6 +25,7 @@ enum DeviceCredentialAuthentication {
         let discovery: ProxyPing = try DeviceWebAuthn.decode(await request("v1/webapi/ping", [], nil), field: "proxy discovery")
         try discovery.validate()
         guard discovery.cluster_name == identity.clusterName else { throw TeleportError.invalidResponse("registration cluster") }
+        if usage == .passwordless, discovery.auth.allow_passwordless != true { throw TeleportError.unsupportedPolicy(.passwordless) }
         let callback = try presenter.map { _ in try BrowserCallback() }
         defer { callback?.close() }
         let callbackURL = try await callback?.start()
@@ -27,11 +34,11 @@ enum DeviceCredentialAuthentication {
         let registrationRequest: Data
         switch try DeviceAuthRPC.managementChallenge(challenge) {
         case .none:
-            registrationRequest = try DeviceAuthRPC.registrationRequest()
+            registrationRequest = try DeviceAuthRPC.registrationRequest(usage: usage)
         case .totp:
             guard presenter == nil else { throw TeleportError.unsupportedPolicy(.browserMFA) }
             guard !otp.isEmpty else { throw TeleportError.oneTimeCodeRequired }
-            registrationRequest = try DeviceAuthRPC.registrationRequest(otp: otp)
+            registrationRequest = try DeviceAuthRPC.registrationRequest(otp: otp, usage: usage)
         case .browser(let id):
             guard let callback, let presenter else {
                 throw TeleportError.unsupportedPolicy(.browserMFA)
@@ -39,50 +46,75 @@ enum DeviceCredentialAuthentication {
             let approval = try await BrowserMFAApproval.receive(
                 proxy: proxy, requestID: id, callback: callback, presenter: presenter
             )
-            registrationRequest = try DeviceAuthRPC.registrationRequest(approval: approval)
+            registrationRequest = try DeviceAuthRPC.registrationRequest(approval: approval, usage: usage)
         }
         try Task.checkCancellation()
         let bytes = try await rpc(DeviceAuthRPC.registrationPath, registrationRequest)
         let creation = try DeviceAuthRPC.registrationChallenge(bytes)
-        try creation.validate(proxy: proxy, username: identity.username)
+        try creation.validate(proxy: proxy, username: identity.username, usage: usage)
         let key = try await keys.create(prompt: prompt)
         try Task.checkCancellation()
         let registration = try await DeviceWebAuthn.registration(challenge: creation, proxy: proxy, username: identity.username,
-                                                                key: key, keys: keys, prompt: prompt)
+                                                                key: key, keys: keys, prompt: prompt, usage: usage)
         try Task.checkCancellation()
         let addRequest = try DeviceAuthRPC.addRequest(
             deviceName: name, credentialID: registration.credentialID,
-            clientDataJSON: registration.clientDataJSON, attestationObject: registration.attestationObject
+            clientDataJSON: registration.clientDataJSON, attestationObject: registration.attestationObject, usage: usage
         )
         let added = try await rpc(DeviceAuthRPC.addPath, addRequest)
         try DeviceAuthRPC.validateAddedDevice(added, credentialID: registration.credentialID,
-                                             rpID: creation.publicKey.rp.id, publicKeyCOSE: registration.publicKeyCOSE)
+                                             rpID: creation.publicKey.rp.id, publicKeyCOSE: registration.publicKeyCOSE, usage: usage)
         try Task.checkCancellation()
         // The server and Keychain cannot commit together. A failed add preserves any prior local credential.
         try await store.add(DeviceCredential(clusterName: identity.clusterName, credentialID: registration.credentialID,
-                                             protectedKey: key.protectedKey), username: identity.username)
+                                             protectedKey: key.protectedKey,
+                                             userHandle: usage == .passwordless ? creation.publicKey.user.id : nil), username: identity.username)
     }
 
     static func login(proxy: TeleportProxy, username: String, password: String, ttl: TimeInterval, prompt: String,
                       store: any DeviceCredentialStorage, keys: any DeviceKeyOperations,
                       request: AuthRequest? = nil) async throws -> TeleportIdentity {
-        guard let credential = try await store.load(username: username) else { throw TeleportError.deviceCredentialMissing }
+        try await authenticate(proxy: proxy, username: username, password: password, usage: .mfa, ttl: ttl,
+                               prompt: prompt, store: store, keys: keys, request: request)
+    }
+
+    static func loginPasswordless(proxy: TeleportProxy, username: String, ttl: TimeInterval, prompt: String,
+                                  store: any DeviceCredentialStorage, keys: any DeviceKeyOperations,
+                                  request: AuthRequest? = nil) async throws -> TeleportIdentity {
+        try await authenticate(proxy: proxy, username: username, password: "", usage: .passwordless, ttl: ttl,
+                               prompt: prompt, store: store, keys: keys, request: request)
+    }
+
+    private static func authenticate(proxy: TeleportProxy, username: String, password: String, usage: DeviceCredentialUsage,
+                                     ttl: TimeInterval, prompt: String, store: any DeviceCredentialStorage,
+                                     keys: any DeviceKeyOperations, request: AuthRequest?) async throws -> TeleportIdentity {
+        guard let credential = try await store.load(username: username), usage == .mfa || credential.userHandle != nil else {
+            throw TeleportError.deviceCredentialMissing
+        }
         try credential.validate()
         let request = http(proxy: proxy, request: request)
         let discovery: ProxyPing = try DeviceWebAuthn.decode(await request("v1/webapi/ping", [], nil), field: "proxy discovery")
         try discovery.validate()
         guard discovery.cluster_name == credential.clusterName else { throw TeleportError.invalidResponse("device credential cluster") }
-        let begin = try JSONEncoder().encode(LoginBegin(user: username, pass: password))
-        let challenge: LoginChallenge = try DeviceWebAuthn.decode(await request("v1/webapi/mfa/login/begin", [], begin), field: "device login challenge")
+        if usage == .passwordless, discovery.auth.allow_passwordless != true { throw TeleportError.unsupportedPolicy(.passwordless) }
+        let begin = usage == .passwordless
+            ? try JSONEncoder().encode(PasswordlessBegin())
+            : try JSONEncoder().encode(LoginBegin(user: username, pass: password))
+        let challenge: LoginChallenge = try DeviceWebAuthn.decode(
+            await request("v1/webapi/mfa/login/begin", [], begin), field: "device login challenge"
+        )
         guard challenge.sso_challenge == nil else { throw TeleportError.unsupportedPolicy(.sessionMFA) }
         guard let options = challenge.webauthn_challenge else { throw TeleportError.deviceCredentialMissing }
-        let assertion = try await DeviceWebAuthn.assertion(challenge: options, credential: credential, proxy: proxy, keys: keys, prompt: prompt)
+        let assertion = try await DeviceWebAuthn.assertion(challenge: options, credential: credential, proxy: proxy,
+                                                          keys: keys, prompt: prompt, usage: usage)
         try Task.checkCancellation()
         let key = try await Task.detached { try CredentialKey() }.value
         try Task.checkCancellation()
-        let finish = LoginFinish(user: username, password: password, totp_code: "", ssh_pub_key: Data(key.sshPublicKey.utf8),
+        let finish = LoginFinish(user: usage == .passwordless ? "" : username, password: password, totp_code: "", ssh_pub_key: Data(key.sshPublicKey.utf8),
                                  tls_pub_key: Data(key.tlsPublicKeyPEM.utf8), ttl: Int64(ttl * 1_000_000_000), webauthn_challenge_response: assertion)
-        let response: LoginResponse = try DeviceWebAuthn.decode(await request("v1/webapi/mfa/login/finish", [], JSONEncoder().encode(finish)), field: "device login certificates")
+        let response: LoginResponse = try DeviceWebAuthn.decode(
+            await request("v1/webapi/mfa/login/finish", [], JSONEncoder().encode(finish)), field: "device login certificates"
+        )
         let userTrust = try await UserAuthorityTrust.load(proxy: proxy, request: request)
         try Task.checkCancellation()
         return try response.identity(proxy: proxy, username: username, cluster: discovery.cluster_name, key: key, userTrust: userTrust, ttl: ttl)

@@ -43,11 +43,11 @@ enum DeviceAuthRPC {
         return .none
     }
 
-    static func registrationRequest(approval: BrowserMFAResponse? = nil, otp: String? = nil) throws -> Data {
+    static func registrationRequest(approval: BrowserMFAResponse? = nil, otp: String? = nil, usage: DeviceCredentialUsage = .mfa) throws -> Data {
         guard approval == nil || otp == nil else { throw TeleportError.invalidConfiguration("one device approval method is required") }
         var request = Teleportkit_Deviceauth_CreateRegisterChallengeRequest()
         request.deviceType = 3 // WEBAUTHN
-        request.deviceUsage = 1 // MFA
+        request.deviceUsage = usage.rawValue
         if let approval {
             try approval.webauthnResponse.validate()
             var browser = Teleportkit_Deviceauth_BrowserMFAResponse()
@@ -88,7 +88,8 @@ enum DeviceAuthRPC {
         ))
     }
 
-    static func addRequest(deviceName: String, credentialID: Data, clientDataJSON: Data, attestationObject: Data) throws -> Data {
+    static func addRequest(deviceName: String, credentialID: Data, clientDataJSON: Data, attestationObject: Data,
+                           usage: DeviceCredentialUsage = .mfa) throws -> Data {
         guard !deviceName.isEmpty, deviceName.utf8.count <= 30, !credentialID.isEmpty, credentialID.count <= 1024,
               !clientDataJSON.isEmpty, clientDataJSON.count <= 16_384,
               !attestationObject.isEmpty, attestationObject.count <= 65_536 else {
@@ -100,20 +101,23 @@ enum DeviceAuthRPC {
         creation.response.clientDataJson = clientDataJSON
         creation.response.attestationObject = attestationObject
         creation.extensions.credProps = Teleportkit_Deviceauth_CredentialPropertiesOutput()
+        creation.extensions.credProps.rk = usage == .passwordless
         var request = Teleportkit_Deviceauth_AddMFADeviceSyncRequest()
         request.newDeviceName = deviceName
         request.newMfaResponse.webauthn = creation
-        request.deviceUsage = 1 // MFA
+        request.deviceUsage = usage.rawValue
         request.contextUser = Teleportkit_Deviceauth_ContextUser()
         return try request.serializedData()
     }
 
-    static func validateAddedDevice(_ bytes: Data, credentialID: Data, rpID: String, publicKeyCOSE: Data) throws {
+    static func validateAddedDevice(_ bytes: Data, credentialID: Data, rpID: String, publicKeyCOSE: Data,
+                                    usage: DeviceCredentialUsage = .mfa) throws {
         let response: Teleportkit_Deviceauth_AddMFADeviceSyncResponse = try decode(bytes)
         guard response.hasDevice, case .webauthn(let device)? = response.device.device,
               device.credentialID == credentialID,
               device.credentialRpID == rpID,
-              device.publicKeyCbor == publicKeyCOSE else {
+              device.publicKeyCbor == publicKeyCOSE,
+              usage == .mfa || device.residentKey else {
             throw TeleportError.invalidResponse("registered device binding")
         }
     }

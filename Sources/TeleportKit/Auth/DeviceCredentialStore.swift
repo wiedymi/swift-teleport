@@ -8,12 +8,21 @@ struct DeviceCredential: Codable, Sendable, CustomStringConvertible, CustomDebug
     let credentialID: Data
     /// An opaque encrypted representation. The private key stays in the Secure Enclave.
     let protectedKey: Data
+    let userHandle: Data?
+
+    init(clusterName: String, credentialID: Data, protectedKey: Data, userHandle: Data? = nil) {
+        self.clusterName = clusterName
+        self.credentialID = credentialID
+        self.protectedKey = protectedKey
+        self.userHandle = userHandle
+    }
 
     func validate() throws {
         guard !clusterName.isEmpty, clusterName.utf8.count <= 1024,
               !clusterName.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
               !credentialID.isEmpty, credentialID.count <= 1024,
-              !protectedKey.isEmpty, protectedKey.count <= 16_384 else {
+              !protectedKey.isEmpty, protectedKey.count <= 16_384,
+              userHandle.map({ (1...64).contains($0.count) }) ?? true else {
             throw TeleportError.deviceCredentialStorage
         }
     }
