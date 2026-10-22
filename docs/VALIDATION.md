@@ -13,12 +13,17 @@ The browser setup identity is never persisted.
 | Check | Result |
 | --- | --- |
 | `swift test` | 94 passed; two live tests skipped without fixtures |
-| `IntegrationTests/Scripts/test-e2e.sh --suite device-credential -- swift test --skip-build --filter DeviceCredentialLiveTests` | Passed against the pinned 18.11.4 arm64 server in 91.996 seconds |
+| `IntegrationTests/Scripts/test-e2e.sh --suite device-credential -- swift test --filter DeviceCredentialLiveTests` | Passed against the pinned 18.11.4 arm64 server in 90.497 seconds |
 | Independent source and diff review | Account, cluster, RP, key, callback, cancellation, and storage paths reviewed |
 
 The fresh live fixture covered password/TOTP and password-based device MFA again.
-It then registered a resident credential with fresh TOTP management approval and
-used passwordless login to obtain and store a complete SSH/TLS identity. A copied
+It approved a real headless request with the software WebAuthn credential through
+Auth mTLS. The actual HTTPS POST returned a valid one-minute setup identity, which
+stayed out of identity storage. It also obtained a real browser-MFA management
+challenge with the loopback redirect and proxy address. The listener was then
+closed; this did not complete a browser callback. The identity authorized resident
+registration with fresh TOTP management approval. Passwordless login obtained and stored the
+complete normal SSH/TLS identity. A copied
 record for another requested account was rejected. Local deletion blocked later
 login and left issued access intact. HTTPS and Auth mTLS checks stayed active.
 The test used a software P-256 key and memory storage, not Apple hardware.
@@ -29,9 +34,9 @@ certificate binding, and exclusive setup ownership. Resident registration and
 native assertion tests cover user-handle storage, required verification,
 legacy records, failed storage, and identity preservation.
 
-Still unverified: the complete headless browser → management approval → device
-registration flow on a real server, Apple browser transitions, Secure Enclave,
-Face ID/Touch ID, signed Keychain access, hardware recovery, and provider SSO.
+Still unverified: approval through a real browser and its management callback,
+Apple browser transitions, Secure Enclave, Face ID/Touch ID, signed Keychain
+access, hardware recovery, and provider SSO.
 Existing SSO callback tests passed; no real provider was used. A software test key
 or mock presenter does not prove any of these properties. The one-minute setup
 certificate can expire during the second browser approval; retry is required.

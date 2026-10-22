@@ -71,14 +71,25 @@ final class DeviceCredentialLiveTests: XCTestCase, @unchecked Sendable {
         let retained = try await client.identity()
         XCTAssertTrue(retained.tlsCertificateDER == identity.tlsCertificateDER)
 
-        // TOTP isolates resident registration and passwordless certificate issue from browser setup.
+        // Wait before the one-minute setup identity starts. TOTP isolates management approval from browser UI.
         try await Self.nextOTPPeriod()
+        let bootstrap = try await HeadlessBootstrap.perform(
+            proxy: proxy, username: invitation.username,
+            presenter: LiveHeadlessApproval(identity: retained, credential: credential, keys: keys)
+        )
+        XCTAssertTrue(bootstrap.isUsable())
+        XCTAssertEqual(bootstrap.username, invitation.username)
+        XCTAssertEqual(bootstrap.clusterName, fixture.clusterName)
+        XCTAssertTrue(bootstrap.validBefore.timeIntervalSinceNow <= 70)
+        let afterBootstrap = try await client.identity()
+        XCTAssertTrue(afterBootstrap.tlsCertificateDER == retained.tlsCertificateDER)
+        try await Self.requireManagementBrowserChallenge(identity: bootstrap)
         let transport = ProxyTransport()
         try await DeviceCredentialAuthentication.register(
-            proxy: proxy, identity: retained, name: "test-passwordless-key", otp: Self.totp(seed), presenter: nil,
+            proxy: proxy, identity: bootstrap, name: "test-passwordless-key", otp: Self.totp(seed), presenter: nil,
             prompt: "Register test passwordless key", store: store, keys: keys, usage: .passwordless
         ) { path, message in
-            try await transport.unary(path: path, message: message, identity: retained)
+            try await transport.unary(path: path, message: message, identity: bootstrap)
         }
         let resident = await store.load(username: invitation.username)
         let passwordlessCredential = try XCTUnwrap(resident)
@@ -140,7 +151,7 @@ final class DeviceCredentialLiveTests: XCTestCase, @unchecked Sendable {
     }
     private struct Invitation: Decodable { let username: String; let token: String }
     private struct EnrollmentChallenge: Decodable { let qrCode: Data }
-    private enum LiveFailure: Error { case invalidFixture, invalidEnrollment }
+    private enum LiveFailure: Error { case invalidFixture, invalidEnrollment, missingBrowserChallenge }
 
     private static func read(_ url: URL) throws -> Data {
         guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576 else {
@@ -166,6 +177,17 @@ final class DeviceCredentialLiveTests: XCTestCase, @unchecked Sendable {
     }
 
     #if os(macOS)
+    private static func requireManagementBrowserChallenge(identity: TeleportIdentity) async throws {
+        let callback = try BrowserCallback()
+        defer { callback.close() }
+        let callbackURL = try await callback.start()
+        let request = try DeviceAuthRPC.authenticationRequest(proxy: identity.proxy, callbackURL: callbackURL)
+        let response = try await ProxyTransport().unary(path: DeviceAuthRPC.authenticatePath, message: request, identity: identity)
+        guard case .browser = try DeviceAuthRPC.managementChallenge(response) else {
+            throw LiveFailure.missingBrowserChallenge
+        }
+    }
+
     private static func enroll(invitation: Invitation, proxy: TeleportProxy) async throws -> String {
         do { return try await performEnrollment(invitation: invitation, proxy: proxy) }
         catch is CancellationError { throw CancellationError() }

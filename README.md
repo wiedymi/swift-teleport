@@ -314,11 +314,11 @@ swift test
 swift build -c release
 ```
 
-The pinned Teleport 18.11.4 lab passed the older MFA registration/login protocol
-with an injected software test key, real password/TOTP, and issued certificates.
-That does not validate the new browser-to-passwordless setup. Real headless
-approval, Secure Enclave, biometric prompts, signed Keychain access, browser MFA,
-physical keys, provider SSO, and device recovery still need live checks. See the
+The pinned Teleport 18.11.4 lab passed password/TOTP, device MFA, headless approval,
+registration with the short setup identity, and passwordless certificate issue.
+It used a software test key, Auth RPC approval, and TOTP device-management approval.
+This does not prove real browser approval, Secure Enclave, biometric prompts,
+signed Keychain access, physical keys, provider SSO, or device recovery. See the
 [validation record](docs/VALIDATION.md).
 
 The lab wrapper removes its containers, networks, credentials, and run files on

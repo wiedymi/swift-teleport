@@ -13,7 +13,7 @@ ECDSA P-256/P-384/P-521, and RSA SHA-2 signatures.
 | --- | --- | --- |
 | Password/TOTP | Real pinned-server login and issued identity checks | Other server versions need validation |
 | Local browser MFA | Mock certificate endpoint and authenticated loopback tests | Real browser approval, physical keys/passkeys, and Apple app lifecycle remain unverified |
-| Passwordless device key | Real pinned-server registration/login with a software test key; focused tests for browser setup, user verification, user-handle binding, and certificate checks | Real headless/browser setup, Secure Enclave, biometrics, signed Keychain, and recovery remain unverified |
+| Passwordless device key | Real headless approval, setup-identity registration, and passwordless login with a software test key; focused binding and policy tests | Real browser approval, Secure Enclave, biometrics, signed Keychain, and recovery remain unverified |
 | Password-based device MFA | Real registration/login protocol with a software test key; mock browser management approval | Real Secure Enclave, biometrics, signed Keychain, recovery, and browser management UI remain unverified |
 | GitHub/OIDC/SAML browser SSO | Local encrypted callback and identity checks | Real provider login and sandboxed/device presentation remain unverified |
 
