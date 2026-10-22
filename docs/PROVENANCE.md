@@ -8,7 +8,7 @@ from them was copied or translated. Source inspection is not test evidence.
 | Input | Pin | Use |
 | --- | --- | --- |
 | Teleport Apache API | `1283425b60ec5f60d509ba4c791183d452923ff7` | Transport schema, auth resource schema, ALPN/name constants, protocol contract |
-| cad0p/swift-teleport | `77a6bec824f079ce48468ac9a3cad3dda038d3d7` | Design and interoperability review only; no code copied |
+| [cad0p/swift-teleport](https://github.com/cad0p/swift-teleport/tree/77a6bec824f079ce48468ac9a3cad3dda038d3d7) | `77a6bec824f079ce48468ac9a3cad3dda038d3d7` | [MIT](https://github.com/cad0p/swift-teleport/blob/77a6bec824f079ce48468ac9a3cad3dda038d3d7/LICENSE) design and interoperability research only; no code copied |
 | Runtime dependencies | exact versions and commits in `Package.resolved` | NIO, HTTP/2, Apple network transport, protobuf |
 
 `Protos/transport_service.proto` is copied from the Apache-2.0
@@ -52,6 +52,24 @@ Local browser MFA was checked before implementation against the same source pin:
 The public v18.11.1 source has matching relevant fields; that source
 check does not validate a browser approval on the pinned 18.11.4 server. Real
 browser approval remains pending; native credential wire results are separate.
+
+The browser-to-device setup was checked against these primary inputs at the
+same Teleport source pin:
+
+| Source | Wire fact checked |
+| --- | --- |
+| [Headless and passwordless client requests](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/client/weblogin.go) | Headless POST fields and passwordless begin/finish fields |
+| [Headless browser approval](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/lib/web/headless.go) | Approval of the matching server-side headless request |
+| [Headless design](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/rfd/0105-headless-authentication.md) | Browser-approved, key-bound request and short-lived access |
+| [Headless browser UI](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/web/packages/teleport/src/HeadlessRequest/HeadlessRequest.tsx) | Existing WebAuthn approval requirement |
+| [Auth schema](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/api/proto/teleport/legacy/client/proto/authservice.proto) and [WebAuthn schema](https://github.com/gravitational/teleport/blob/1283425b60ec5f60d509ba4c791183d452923ff7/api/proto/teleport/legacy/types/webauthn/webauthn.proto) | `MANAGE_DEVICES` approval, usage 2, resident registration, and user handle |
+
+The independent implementation keeps the 60-second setup identity in memory,
+uses a separate management approval, then requests normal certificates with the
+new passwordless credential. The MIT reference above informed the design review;
+it is not a runtime or build dependency. No source was copied from it.
+Protocol inspection and mock tests do not prove the complete browser flow,
+Secure Enclave behavior, or real-device recovery. See [Validation](VALIDATION.md).
 
 The internal route checks also used these files at the same source pin:
 

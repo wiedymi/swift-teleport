@@ -1,7 +1,45 @@
 # Validation
 
-Date: 20 October 2026. Builds, mock tests, real-server tests, and hardware checks
+Date: 23 October 2026. Builds, mock tests, real-server tests, and hardware checks
 are separate evidence. A build or mock test does not prove device support.
+
+## Browser setup and passwordless device login
+
+Protocol fields were checked against the pinned Teleport source before coding.
+The 18.11.4 lab advertised headless and passwordless support. Its unauthenticated
+passwordless challenge required user verification and allowed credential discovery.
+The browser setup identity is never persisted.
+
+| Check | Result |
+| --- | --- |
+| `swift test` | 94 passed; two live tests skipped without fixtures |
+| `IntegrationTests/Scripts/test-e2e.sh --suite device-credential -- swift test --skip-build --filter DeviceCredentialLiveTests` | Passed against the pinned 18.11.4 arm64 server in 91.996 seconds |
+| Independent source and diff review | Account, cluster, RP, key, callback, cancellation, and storage paths reviewed |
+
+The fresh live fixture covered password/TOTP and password-based device MFA again.
+It then registered a resident credential with fresh TOTP management approval and
+used passwordless login to obtain and store a complete SSH/TLS identity. A copied
+record for another requested account was rejected. Local deletion blocked later
+login and left issued access intact. HTTPS and Auth mTLS checks stayed active.
+The test used a software P-256 key and memory storage, not Apple hardware.
+
+Mock tests cover the exact headless request and key-derived UUID, its short
+certificate lifetime, policy rejection, browser failure, timeout, cancellation,
+certificate binding, and exclusive setup ownership. Resident registration and
+native assertion tests cover user-handle storage, required verification,
+legacy records, failed storage, and identity preservation.
+
+Still unverified: the complete headless browser → management approval → device
+registration flow on a real server, Apple browser transitions, Secure Enclave,
+Face ID/Touch ID, signed Keychain access, hardware recovery, and provider SSO.
+Existing SSO callback tests passed; no real provider was used. A software test key
+or mock presenter does not prove any of these properties. The one-minute setup
+certificate can expire during the second browser approval; retry is required.
+
+The lab wrapper removed its test containers, credentials, and run files. The
+existing user lab and shared caches were kept. No production dependency or
+reference checkout was added. The library's default build files are removed after
+app validation.
 
 ## Readability review
 

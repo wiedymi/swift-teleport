@@ -16,7 +16,7 @@ Use an exact source revision in your app's `Package.swift`:
 // In Package.dependencies:
 .package(
     url: "https://github.com/wiedymi/swift-teleport.git",
-    revision: "8b0567eae5eafc6789e0b6f7179592fdb0b15e1a"
+    revision: "fcbc9de67c40ddfe794615b6a60aa21ba3b7ac78"
 )
 
 // In your app target's dependencies:
@@ -67,10 +67,71 @@ the old record if the write fails. Keep private keys in secure, device-only
 storage, outside logs and cloud sync. See the
 [storage contract](docs/INTEGRATION.md#profile-and-storage).
 
-The examples below use account input from your app: `username`, `password`,
-`oneTimeCode`, and a browser `presenter`. Do not put credentials in source code.
-Each login returns a validated `TeleportIdentity` and writes it to the configured
-store.
+The examples use account input from your app and a browser `presenter`. Do not
+put credentials in source code. Each successful login returns a validated
+`TeleportIdentity` and atomically writes it to the configured store.
+
+## Device key sign-in
+
+For local accounts, an app can use browser approval for first setup, then Face ID
+or Touch ID for later logins. The app does not need to collect or store a password.
+Configure a stable, app-specific Keychain service:
+
+```swift
+let deviceConfiguration = try TeleportSecureEnclaveConfiguration(
+    keychainService: "com.example.app.teleport.device-credentials"
+)
+let client = TeleportClient(
+    proxy: proxy, identityStore: secureStore, secureEnclave: deviceConfiguration
+)
+```
+
+First setup returns normal SSH/TLS access after browser approval and device-key
+registration:
+
+```swift
+let identity = try await client.registerSecureEnclaveCredential(
+    username: username,
+    name: "This device",
+    browser: presenter,
+    prompt: "Set up Teleport sign-in"
+)
+```
+
+Later, obtain fresh certificates with the device key:
+
+```swift
+let identity = try await client.loginWithSecureEnclave(
+    username: username,
+    prompt: "Approve Teleport sign-in",
+    ttl: 3600
+)
+```
+
+When this returns `deviceCredentialMissing`, offer first setup. Do not start setup
+after cancellation, a server policy error, or failed biometric approval.
+The server must enable `allow_headless` and `allow_passwordless`. First setup needs
+an existing web passkey or security key; TOTP cannot approve the headless request.
+Two browser approvals can be needed. The library holds the 60-second setup
+identity in memory only, then stores only the final, normal identity. Slow setup
+can expire and need a retry. There is no refresh token or public headless-login API.
+
+The P-256 authentication key stays in the Secure Enclave. Each login creates a
+separate RSA 3072 SSH/TLS key and obtains new certificates. The device credential
+is local to this app; Safari cannot use it as a saved Apple passkey.
+
+Remove only the local device credential:
+
+```swift
+try await client.deleteSecureEnclaveCredential(username: username)
+```
+
+This keeps the server entry and issued identity. Remove the server entry through
+Teleport separately. Biometric changes or device replacement can require setup
+again. The app supplies prompts, `NSFaceIDUsageDescription`, browser presentation,
+and Keychain signing settings. No Associated Domains capability is needed.
+See [setup and recovery](docs/INTEGRATION.md#optional-biometric-device-credential)
+and [protocol limits](docs/AUTHENTICATION.md#secure-enclave-device-credentials).
 
 ## Password and TOTP
 
@@ -140,85 +201,34 @@ struct AppBrowserPresenter: TeleportBrowserPresenter {
 ```
 
 `openURL` must present the system authentication browser and return after it
-opens. Keep that browser alive until login completes or all callers cancel.
-Matching callers share one login. Canceling one caller must not close another
-caller's browser. The callback uses encrypted IPv4 loopback HTTP; a sandboxed Mac
-app needs incoming network permission. See
+opens. Device setup can call it twice: close the prior browser before replacement,
+and ignore that browser's completion so it does not cancel the current login.
+Keep the current browser alive until the operation ends. Matching login callers
+share one task; canceling one must not close another caller's browser.
+Local MFA and SSO use encrypted IPv4 loopback callbacks. Headless setup uses the
+verified HTTPS response instead. A sandboxed Mac app needs incoming network
+permission for the management-MFA callback. See
 [browser ownership and app settings](docs/INTEGRATION.md#browser-presentation).
 
-## Optional Secure Enclave MFA
+## Existing password-based device credentials
 
-This creates a custom, device-bound P-256 MFA credential. It uses Face ID or
-Touch ID for authentication signatures. It is separate from SSH/TLS keys and does
-not read saved Apple passkeys. Sign-in still requires a password.
-
-Enable it with a stable app-specific Keychain service:
-
-```swift
-let deviceConfiguration = try TeleportSecureEnclaveConfiguration(
-    keychainService: "com.example.app.teleport.device-credentials"
-)
-let client = TeleportClient(
-    proxy: proxy,
-    identityStore: secureStore,
-    secureEnclave: deviceConfiguration
-)
-```
-
-First sign in with an existing method. Then authorize setup with a **fresh** TOTP
-code. A code already used for login can be rejected as a replay:
-
-```swift
-try await client.login(username: username, password: password, otp: oneTimeCode)
-// Obtain a fresh code before this separate setup request.
-try await client.registerSecureEnclaveCredential(
-    name: "This device",
-    otp: freshSetupCode,
-    prompt: "Set up Teleport sign-in"
-)
-```
-
-Or use a new browser approval from an existing passkey or security key:
+The older MFA APIs remain available for apps that need password-based login.
+First obtain a normal identity with password/TOTP or browser SSO. Then authorize
+registration with a fresh TOTP code or browser approval:
 
 ```swift
 try await client.registerSecureEnclaveCredential(
-    name: "This device",
-    browser: presenter,
-    prompt: "Set up Teleport sign-in"
+    name: "This device", browser: presenter, prompt: "Set up Teleport MFA"
 )
-```
-
-Supply a code or a presenter, not both. Setup uses the current verified identity
-and a fresh device-management approval chosen by the server.
-
-Later, sign in with the registered credential:
-
-```swift
 let identity = try await client.loginWithSecureEnclave(
-    username: username,
-    password: password,
-    prompt: "Approve Teleport sign-in"
+    username: username, password: password, prompt: "Approve Teleport MFA"
 )
 ```
 
-Remove only the local credential:
-
-```swift
-try await client.deleteSecureEnclaveCredential(username: username)
-```
-
-Local deletion keeps the server entry and issued identity. Remove the server entry
-through Teleport separately. Keep another login method for recovery: device or
-biometric changes can make the key unusable, and failed setup can leave an unused
-server entry.
-
-The app supplies screens, prompts, `NSFaceIDUsageDescription`, signing settings,
-and the Keychain namespace. No Associated Domains capability is needed. The RP
-must equal the proxy host. There is no software-key fallback or hardware
-attestation proof to Teleport. The signature counter is zero. Hardware SSH-key
-and Device Trust policies remain unsupported. See
-[setup, signing, and recovery](docs/INTEGRATION.md#optional-biometric-device-credential)
-and [authentication choices](docs/AUTHENTICATION.md#optional-secure-enclave-mfa).
+For TOTP setup, supply `otp: freshSetupCode` instead of `browser:`. A code already
+used for login can be rejected. This creates a non-resident MFA credential;
+it does not enable passwordless login. Explicitly remove its local record and
+server entry before using the new device-key setup.
 
 ## Find nodes and prepare SSH
 
@@ -304,10 +314,11 @@ swift test
 swift build -c release
 ```
 
-The pinned Teleport 18.11.4 lab passed registration/login with an injected software
-test key, real password/TOTP, and issued SSH/TLS certificates. Secure Enclave,
-biometric prompts, signed Keychain access, real browser MFA, physical keys,
-provider SSO, and device lifecycle checks remain unverified. See the
+The pinned Teleport 18.11.4 lab passed the older MFA registration/login protocol
+with an injected software test key, real password/TOTP, and issued certificates.
+That does not validate the new browser-to-passwordless setup. Real headless
+approval, Secure Enclave, biometric prompts, signed Keychain access, browser MFA,
+physical keys, provider SSO, and device recovery still need live checks. See the
 [validation record](docs/VALIDATION.md).
 
 The lab wrapper removes its containers, networks, credentials, and run files on
