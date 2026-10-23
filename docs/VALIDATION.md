@@ -34,6 +34,12 @@ certificate binding, and exclusive setup ownership. Resident registration and
 native assertion tests cover user-handle storage, required verification,
 legacy records, failed storage, and identity preservation.
 
+Setup-context tests check shared context ownership, cleanup after completion,
+failure and cancellation, and fresh contexts for later operations. The setup
+workflow test checks that both initial signatures use the scoped key operations,
+while a later login uses the original driver. These checks use a test context and
+software keys; they do not prove a reduced hardware prompt count.
+
 Still unverified: approval through a real browser and its management callback,
 Apple browser transitions, Secure Enclave, Face ID/Touch ID, signed Keychain
 access, hardware recovery, and provider SSO.

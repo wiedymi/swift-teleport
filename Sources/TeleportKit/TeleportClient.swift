@@ -131,12 +131,12 @@ public actor TeleportClient {
             try await deviceKeyOperations.checkAvailability()
             let bootstrap = try await HeadlessBootstrap.perform(proxy: proxy, username: username, presenter: browser)
             try Task.checkCancellation()
-            try await DeviceCredentialAuthentication.register(proxy: proxy, identity: bootstrap, name: name, otp: "", presenter: browser,
-                                                               prompt: prompt, store: store, keys: deviceKeyOperations, usage: .passwordless) { path, message in
+            return try await DeviceCredentialAuthentication.registerAndLoginPasswordless(
+                proxy: proxy, identity: bootstrap, name: name, presenter: browser, prompt: prompt, ttl: ttl,
+                store: store, keys: deviceKeyOperations
+            ) { path, message in
                 try await self.authRequest(path: path, message: message, identity: bootstrap)
             }
-            return try await DeviceCredentialAuthentication.loginPasswordless(proxy: proxy, username: username, ttl: ttl, prompt: prompt,
-                                                                               store: store, keys: deviceKeyOperations)
         }
     }
 

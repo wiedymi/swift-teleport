@@ -255,20 +255,23 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
     func testBrowserApprovedPasswordlessRegistrationThenLoginReturnsCompleteCertificates() async throws {
         let issuer = try BrowserMFACertificateIssuer()
         defer { issuer.remove() }
-        let proxy = try Self.proxy(), keys = DeviceTestKeys(), store = DeviceTestStore()
+        let proxy = try Self.proxy(), setupKeys = DeviceTestKeys(), store = DeviceTestStore()
+        let keys = DeviceTestKeys(setupKeys: setupKeys)
         let previous = try await Self.identity(issuer: issuer, proxy: proxy)
-        let server = try await DeviceTestServer(issuer: issuer, keys: keys, approval: .browser, usage: .passwordless)
-        try await DeviceCredentialAuthentication.register(proxy: proxy, identity: previous, name: "Test device", otp: "",
-                                                          presenter: DeviceTestBrowser(server: server), prompt: "Register test device",
-                                                          store: store, keys: keys, usage: .passwordless,
-                                                          request: { try await server.request(path: $0, query: $1, body: $2) },
-                                                          rpc: { try await server.rpc(path: $0, body: $1) })
+        let server = try await DeviceTestServer(issuer: issuer, keys: setupKeys, approval: .browser, usage: .passwordless)
+        let identityStore = DeviceTestIdentityStore(identity: previous)
+        let client = TeleportClient(proxy: proxy, identityStore: identityStore)
+        let identity = try await client.setupDeviceCredential {
+            try await DeviceCredentialAuthentication.registerAndLoginPasswordless(
+                proxy: proxy, identity: previous, name: "Test device", presenter: DeviceTestBrowser(server: server),
+                prompt: "Register test device", ttl: 3600, store: store, keys: keys,
+                request: { try await server.request(path: $0, query: $1, body: $2) },
+                rpc: { try await server.rpc(path: $0, body: $1) }
+            )
+        }
         let registered = await store.load(username: "alice")
         let credential = try XCTUnwrap(registered)
         XCTAssertEqual(credential.userHandle, DeviceTestServer.userHandle)
-        let identityStore = DeviceTestIdentityStore(identity: previous)
-        let client = TeleportClient(proxy: proxy, identityStore: identityStore)
-        let identity = try await Self.login(client: client, proxy: proxy, store: store, keys: keys, server: server, usage: .passwordless)
         XCTAssertEqual(identity.username, "alice")
         XCTAssertEqual(identity.clusterName, "cluster")
         XCTAssertEqual(identity.allowedLogins, ["alice"])
@@ -282,6 +285,16 @@ final class DeviceCredentialTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(snapshot.finishes, 1)
         XCTAssertTrue(snapshot.assertionSignatureVerified)
         XCTAssertTrue(snapshot.browserApprovalMapped)
+        let setupCreates = await setupKeys.createCount, setupSigns = await setupKeys.signCount
+        let initialCreates = await keys.createCount, initialSigns = await keys.signCount
+        XCTAssertEqual(setupCreates, 1)
+        XCTAssertEqual(setupSigns, 2)
+        XCTAssertEqual(initialCreates, 0)
+        XCTAssertEqual(initialSigns, 0)
+        _ = try await Self.login(client: client, proxy: proxy, store: store, keys: keys, server: server, usage: .passwordless)
+        let laterSigns = await keys.signCount, unchangedSetupSigns = await setupKeys.signCount
+        XCTAssertEqual(laterSigns, 1)
+        XCTAssertEqual(unchangedSetupSigns, 2)
     }
 
     func testPasswordlessRegistrationRejectsNonResidentAcknowledgmentAndExistingCredentials() async throws {
@@ -577,10 +590,16 @@ private actor DeviceTestKeys: DeviceKeyOperations {
     enum Mode: Equatable, Sendable { case ready, unavailable, deny, wait, missing }
     private let key = P256.Signing.PrivateKey()
     private let mode: Mode
+    private let setupKeys: DeviceTestKeys?
     private var signWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var createCount = 0
     private(set) var signCount = 0
-    init(mode: Mode = .ready) { self.mode = mode }
+    init(mode: Mode = .ready, setupKeys: DeviceTestKeys? = nil) { self.mode = mode; self.setupKeys = setupKeys }
+    func withAuthentication<Result: Sendable>(
+        prompt: String, operation: @Sendable (any DeviceKeyOperations) async throws -> Result
+    ) async throws -> Result {
+        try await operation(setupKeys ?? self)
+    }
     func material() -> DeviceKeyMaterial { .init(protectedKey: key.rawRepresentation, publicKeyX963: key.publicKey.x963Representation) }
     func create(prompt: String) throws -> DeviceKeyMaterial {
         createCount += 1
@@ -592,9 +611,11 @@ private actor DeviceTestKeys: DeviceKeyOperations {
         let waiters = signWaiters; signWaiters.removeAll()
         waiters.forEach { $0.resume() }
         if mode == .deny { throw TeleportError.biometricsUnavailable }
-        if mode == .missing || protectedKey != key.rawRepresentation { throw TeleportError.deviceCredentialMissing }
+        guard mode != .missing, let signingKey = try? P256.Signing.PrivateKey(rawRepresentation: protectedKey) else {
+            throw TeleportError.deviceCredentialMissing
+        }
         if mode == .wait { try await Task.sleep(for: .seconds(10)) }
-        return try key.signature(for: data).derRepresentation
+        return try signingKey.signature(for: data).derRepresentation
     }
     func waitForSign() async {
         if signCount != 0 { return }

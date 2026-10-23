@@ -78,6 +78,19 @@ enum DeviceCredentialAuthentication {
                                prompt: prompt, store: store, keys: keys, request: request)
     }
 
+    static func registerAndLoginPasswordless(
+        proxy: TeleportProxy, identity: TeleportIdentity, name: String, presenter: any TeleportBrowserPresenter,
+        prompt: String, ttl: TimeInterval, store: any DeviceCredentialStorage, keys: any DeviceKeyOperations,
+        request: AuthRequest? = nil, rpc: AuthRPC
+    ) async throws -> TeleportIdentity {
+        try await keys.withAuthentication(prompt: prompt) { setupKeys in
+            try await register(proxy: proxy, identity: identity, name: name, otp: "", presenter: presenter,
+                               prompt: prompt, store: store, keys: setupKeys, usage: .passwordless, request: request, rpc: rpc)
+            return try await loginPasswordless(proxy: proxy, username: identity.username, ttl: ttl, prompt: prompt,
+                                              store: store, keys: setupKeys, request: request)
+        }
+    }
+
     static func loginPasswordless(proxy: TeleportProxy, username: String, ttl: TimeInterval, prompt: String,
                                   store: any DeviceCredentialStorage, keys: any DeviceKeyOperations,
                                   request: AuthRequest? = nil) async throws -> TeleportIdentity {

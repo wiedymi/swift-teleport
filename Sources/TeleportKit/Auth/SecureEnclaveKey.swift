@@ -14,13 +14,51 @@ protocol DeviceKeyOperations: Sendable {
     func create(prompt: String) async throws -> DeviceKeyMaterial
     /// Returns the ASN.1 DER ECDSA signature required by WebAuthn ES256.
     func sign(_ data: Data, protectedKey: Data, prompt: String) async throws -> Data
+    func withAuthentication<Result: Sendable>(
+        prompt: String, operation: @Sendable (any DeviceKeyOperations) async throws -> Result
+    ) async throws -> Result
 }
 
 extension DeviceKeyOperations {
     func checkAvailability() async throws {}
+    func withAuthentication<Result: Sendable>(
+        prompt: String, operation: @Sendable (any DeviceKeyOperations) async throws -> Result
+    ) async throws -> Result {
+        try await operation(self)
+    }
 }
 
 struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
+    private let scopedAuthentication: AuthenticationPrompt?
+
+    init() { scopedAuthentication = nil }
+    private init(authentication: AuthenticationPrompt) { scopedAuthentication = authentication }
+
+    func withAuthentication<Result: Sendable>(
+        prompt: String, operation: @Sendable (any DeviceKeyOperations) async throws -> Result
+    ) async throws -> Result {
+        try Self.validatePrompt(prompt)
+        return try await withAuthentication(AuthenticationPrompt(reason: prompt), operation: operation)
+    }
+
+    func withAuthentication<Result: Sendable>(
+        _ authentication: AuthenticationPrompt, operation: @Sendable (any DeviceKeyOperations) async throws -> Result
+    ) async throws -> Result {
+        defer { authentication.context.invalidate() }
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            let result = try await operation(Self(authentication: authentication))
+            try Task.checkCancellation()
+            return result
+        } onCancel: {
+            authentication.context.invalidate()
+        }
+    }
+
+    func authenticationPrompt(reason: String) -> AuthenticationPrompt {
+        scopedAuthentication ?? AuthenticationPrompt(reason: reason)
+    }
+
     func checkAvailability() async throws {
         try Task.checkCancellation()
         try await Task.detached {
@@ -33,8 +71,8 @@ struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
 
     func create(prompt: String) async throws -> DeviceKeyMaterial {
         try Self.validatePrompt(prompt)
-        let authentication = AuthenticationPrompt(reason: prompt)
-        defer { authentication.context.invalidate() }
+        let authentication = authenticationPrompt(reason: prompt)
+        defer { if scopedAuthentication == nil { authentication.context.invalidate() } }
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             do {
@@ -62,8 +100,8 @@ struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
     func sign(_ data: Data, protectedKey: Data, prompt: String) async throws -> Data {
         try Self.validatePrompt(prompt)
         guard !protectedKey.isEmpty, protectedKey.count <= 16_384 else { throw TeleportError.deviceCredentialMissing }
-        let authentication = AuthenticationPrompt(reason: prompt)
-        defer { authentication.context.invalidate() }
+        let authentication = authenticationPrompt(reason: prompt)
+        defer { if scopedAuthentication == nil { authentication.context.invalidate() } }
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             do {
@@ -131,11 +169,10 @@ struct SecureEnclaveDeviceKeyOperations: DeviceKeyOperations {
 }
 
 /// The context is configured before use. Only invalidation crosses the blocking key operation.
-private final class AuthenticationPrompt: @unchecked Sendable {
+final class AuthenticationPrompt: @unchecked Sendable {
     let context: LAContext
 
-    init(reason: String) {
-        let context = LAContext()
+    init(reason: String, context: LAContext = LAContext()) {
         context.localizedReason = reason
         context.localizedFallbackTitle = ""
         context.touchIDAuthenticationAllowableReuseDuration = 0

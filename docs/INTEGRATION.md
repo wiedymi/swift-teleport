@@ -104,6 +104,13 @@ required for device management. Setup holds a 60-second identity in memory only;
 show a retry action if that window expires. Store only the final identity.
 There is no refresh token.
 
+First setup keeps one local authentication context for registration and its
+immediate first certificate request, then invalidates it. Later logins require
+fresh local authentication. This can reduce repeated Face ID/Touch ID prompts
+during setup; the exact count is not verified on hardware. Teleport's browser
+login and device-management approvals remain separate. Do not treat library
+authentication as an automatic grant for an app's separate lock policy.
+
 Use a stable app-specific Keychain service. Leave `accessGroup` unset for the
 default group, or supply a group allowed by the app's signing and provisioning.
 Do not sync or export device records. The issued identity contains a separate

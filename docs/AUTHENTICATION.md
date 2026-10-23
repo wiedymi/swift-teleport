@@ -141,10 +141,19 @@ again through the new setup call.
 `deleteSecureEnclaveCredential(username:)` removes only the local record.
 It does not remove Teleport's entry, sign out, or revoke issued certificates.
 
-The key uses `privateKeyUsage` and `biometryCurrentSet`. Each signature uses a new
-`LAContext`, with unlock reuse disabled and no passcode fallback. Cancellation
-invalidates the context. Unavailable hardware or biometrics returns a typed error;
-there is no software fallback. Blocking key work runs away from the main actor.
+The key uses `privateKeyUsage` and `biometryCurrentSet`, with device-unlock reuse
+disabled and no passcode fallback. First setup shares one private `LAContext`
+between key creation, the registration verification signature, and the immediate
+first certificate signature. One local approval can cover these steps. The
+context is invalidated on completion, failure, or cancellation. Later logins use
+fresh contexts. Both server browser approvals remain separate and cannot be
+reused across MFA scopes.
+
+This reduces repeated local prompts within one setup action. It does not remove
+either signature or weaken later login verification. The exact Face ID/Touch ID
+prompt count still needs a real-device check. Unavailable hardware or biometrics
+returns a typed error; there is no software fallback. Blocking key work runs away
+from the main actor.
 
 One non-sync Data Protection Keychain item holds the credential ID, root cluster,
 optional passwordless user handle, and opaque encrypted key representation.
