@@ -12,7 +12,7 @@ The browser setup identity is never persisted.
 
 | Check | Result |
 | --- | --- |
-| `swift test` | 94 passed; two live tests skipped without fixtures |
+| `swift test` | 98 passed; two live tests skipped without fixtures |
 | `IntegrationTests/Scripts/test-e2e.sh --suite device-credential -- swift test --filter DeviceCredentialLiveTests` | Passed against the pinned 18.11.4 arm64 server in 90.497 seconds |
 | Independent source and diff review | Account, cluster, RP, key, callback, cancellation, and storage paths reviewed |
 

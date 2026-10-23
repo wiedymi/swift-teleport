@@ -16,7 +16,7 @@ Use an exact source revision in your app's `Package.swift`:
 // In Package.dependencies:
 .package(
     url: "https://github.com/wiedymi/swift-teleport.git",
-    revision: "fcbc9de67c40ddfe794615b6a60aa21ba3b7ac78"
+    revision: "394b21821ad5979b639a62250705badc7be475ba"
 )
 
 // In your app target's dependencies:
